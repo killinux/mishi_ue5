@@ -1,0 +1,176 @@
+#include "SMishiHud.h"
+#include "MishiCameraPawn.h"
+#include "MishiCouple.h"
+#include "MishiPlayerController.h"
+#include "Styling/CoreStyle.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
+#include "Widgets/Text/STextBlock.h"
+
+// The labels are written as \u escapes so the sources stay ASCII whatever code page the compiler reads them in.
+#define MISHI_TEXT(S) FText::FromString(FString(TEXT(S)))
+
+namespace
+{
+	FSlateFontInfo Font(int32 Size) { return FCoreStyle::GetDefaultFontStyle("Regular", Size); }
+	const FLinearColor ColorOn(0.95f, 0.50f, 0.32f, 1.f);
+	const FLinearColor ColorOff(0.16f, 0.16f, 0.19f, 0.9f);
+}
+
+AMishiCouple* SMishiHud::Couple() const
+{
+	return Owner.IsValid() ? Owner->GetCouple() : nullptr;
+}
+
+AMishiCameraPawn* SMishiHud::Cam() const
+{
+	return Owner.IsValid() ? Owner->GetCam() : nullptr;
+}
+
+TSharedRef<SWidget> SMishiHud::Button(TAttribute<FText> Label, TFunction<void()> OnClick, TFunction<bool()> IsOn, float Width)
+{
+	return SNew(SBox)
+		.WidthOverride(Width)
+		.HeightOverride(34.f)
+		[
+			SNew(SButton)
+			.IsFocusable(false)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.ButtonColorAndOpacity_Lambda([IsOn]() { return FSlateColor(IsOn && IsOn() ? ColorOn : ColorOff); })
+			.OnClicked_Lambda([OnClick]() { if (OnClick) OnClick(); return FReply::Handled(); })
+			[
+				SNew(STextBlock)
+				.Font(Font(13))
+				.ColorAndOpacity(FLinearColor::White)
+				.Text(Label)
+			]
+		];
+}
+
+void SMishiHud::Construct(const FArguments& InArgs)
+{
+	Owner = InArgs._Owner;
+	SetVisibility(EVisibility::SelfHitTestInvisible);
+
+	TSharedRef<SHorizontalBox> Bar = SNew(SHorizontalBox);
+	for (int32 I = 0; I < 4; ++I)
+		Bar->AddSlot().AutoWidth().Padding(3.f)
+		[
+			// "jie duan N"
+			Button(FText::Format(MISHI_TEXT("\u9636\u6BB5 {0}"), FText::AsNumber(I + 1)),
+				[this, I]() { if (AMishiCouple* C = Couple()) C->GoPhase(I); },
+				[this, I]() { const AMishiCouple* C = Couple(); return C && C->CurrentPhase() == I; })
+		];
+	Bar->AddSlot().AutoWidth().Padding(FMargin(14.f, 3.f, 3.f, 3.f))
+	[
+		// "zi dong: kai / guan"
+		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+				return C && C->bAuto ? MISHI_TEXT("\u81EA\u52A8\uFF1A\u5F00") : MISHI_TEXT("\u81EA\u52A8\uFF1A\u5173"); }),
+			[this]() { if (AMishiCouple* C = Couple()) C->bAuto = !C->bAuto; },
+			[this]() { const AMishiCouple* C = Couple(); return C && C->bAuto; }, 96.f)
+	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		// "yu yin: ri / ying / guan"
+		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+				const int32 L = C ? C->VoiceLanguage : 0;
+				return L == 1 ? MISHI_TEXT("\u8BED\u97F3\uFF1A\u65E5") : L == 2 ? MISHI_TEXT("\u8BED\u97F3\uFF1A\u82F1") : MISHI_TEXT("\u8BED\u97F3\uFF1A\u5173"); }),
+			[this]() { if (AMishiCouple* C = Couple()) C->VoiceLanguage = (C->VoiceLanguage + 1) % 3; }, nullptr, 96.f)
+	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		// "nan xing: xian shi / yin cang"
+		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+				return C && !C->bShowHim ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u663E\u793A"); }),
+			[this]() { if (AMishiCouple* C = Couple()) C->SetShowHim(!C->bShowHim); }, nullptr, 96.f)
+	];
+	// camera presets: "quan jing", "zheng mian", "ce mian", "fu shi", "te xie", "fu wei"
+	struct FPreset { const TCHAR* Label; int32 Kind; };
+	const FPreset Presets[] = {
+		{TEXT("\u5168\u666F"), 0}, {TEXT("\u6B63\u9762"), 1}, {TEXT("\u4FA7\u9762"), 2}, {TEXT("\u4FEF\u89C6"), 3}, {TEXT("\u7279\u5199"), 4}, {TEXT("\u590D\u4F4D"), 5}};
+	for (int32 I = 0; I < UE_ARRAY_COUNT(Presets); ++I)
+	{
+		const int32 Kind = Presets[I].Kind;
+		Bar->AddSlot().AutoWidth().Padding(FMargin(I == 0 ? 14.f : 3.f, 3.f, 3.f, 3.f))
+		[
+			Button(FText::FromString(Presets[I].Label), [this, Kind]()
+			{
+				AMishiCameraPawn* P = Cam();
+				if (!P)
+					return;
+				const float Z0 = P->DefaultZoom(), Y0 = P->DefaultYaw();
+				switch (Kind)
+				{
+				case 0: P->SetView(Y0, 0.6f, Z0 * 1.8f); break;
+				case 1: P->SetView(Y0 + 180.f, 0.55f, Z0 * 1.05f); break;
+				case 2: P->SetView(Y0 + 90.f, 0.5f, Z0 * 1.2f); break;
+				case 3: P->SetView(Y0, 0.98f, Z0 * 1.1f); break;
+				case 4: P->SetView(P->GetYaw(), P->GetY(), Z0 * 0.6f); break;
+				default: P->ResetView(); break;
+				}
+			}, nullptr, 64.f)
+		];
+	}
+
+	ChildSlot
+	[
+		SNew(SOverlay)
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Left)
+		.VAlign(VAlign_Top)
+		.Padding(16.f)
+		[
+			SNew(STextBlock)
+			.Visibility(EVisibility::HitTestInvisible)
+			.Font(Font(16))
+			.ColorAndOpacity(FLinearColor::White)
+			.ShadowOffset(FVector2D(1.f, 1.f))
+			.ShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.85f))
+			.Text_Lambda([this]()
+			{
+				const AMishiCouple* C = Couple();
+				if (!C || !C->IsReady())
+					return FText::FromString(TEXT("Mishi UE5 - no couple in the level (Tools/import_slice.py)"));
+				return FText::FromString(FString::Printf(TEXT("%s\n%s  phase %d"), *C->Slice().Title, *C->CurrentPart(), C->CurrentPhase() + 1));
+			})
+		]
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Bottom)
+		.Padding(FMargin(120.f, 0.f, 120.f, 92.f))
+		[
+			SNew(STextBlock)
+			.Visibility(EVisibility::HitTestInvisible)
+			.Font(Font(20))
+			.AutoWrapText(true)
+			.Justification(ETextJustify::Center)
+			.ColorAndOpacity(FLinearColor(1.f, 0.97f, 0.92f, 1.f))
+			.ShadowOffset(FVector2D(1.5f, 1.5f))
+			.ShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.9f))
+			.Text_Lambda([this]()
+			{
+				const AMishiCouple* C = Couple();
+				return C ? FText::FromString(C->CurrentLine()) : FText::GetEmpty();
+			})
+		]
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Bottom)
+		.Padding(12.f)
+		[
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.45f))
+			.Padding(6.f)
+			[
+				Bar
+			]
+		]
+	];
+}
+
+#undef MISHI_TEXT

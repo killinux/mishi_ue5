@@ -1,0 +1,20 @@
+# Unreal build output and caches
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+*.sln
+*.VC.db
+*.opensdf
+*.sdf
+*.suo
+*.xcworkspace
+
+# Game assets: never committed (exported from the game; personal use only)
+Import/
+Content/
+
+# local tool output (renders of game assets stay local too)
+_work/
+out/
