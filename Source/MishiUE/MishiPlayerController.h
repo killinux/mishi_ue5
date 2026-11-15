@@ -38,6 +38,9 @@ private:
 
 	// -MishiShots=<file.json> -MishiShotsDir=<dir>: look-dev stills.  Each shot presses a phase button (or none), sets a view - round
 	// the rig's target or round a bone of hers - lets the scene run for some seconds and saves one frame <dir>/<name>.png; then quit.
+	// A shot whose name starts with "_" takes no picture: it only moves the scene on (a phase button and its transition).
+	// A shot with "hold" or "pt" makes a still of one held pose: the bodies and the camera stop, the renderer settles (hold, in
+	// seconds) or the path tracer adds its samples (pt, samples a pixel: ray tracing must be on in the project), then the picture.
 	// With -MishiTour every frame of every shot is saved instead (<dir>/frame_00000.bmp ...): the same list is a film, cut by cut
 	// (Tools/ue.ps1 tour runs it with -benchmark -fps=30, so 30 frames are a second of the scene).
 	struct FShot
@@ -64,6 +67,11 @@ private:
 		float Push = 0.f;                 // cm a second a bone shot's camera moves in (negative) or out
 		float At = -1.f;                  // seconds into the part at which the shot starts (< 0: the scene just runs on)
 		int32 HisStyle = -1;              // 0 skin, 1 silhouette, 2 hidden (< 0: as it is)
+		float Hold = 0.f;                 // a still of a held pose: the scene stops for this many seconds before the picture
+		                                  // (Lumen and the temporal upscaler settle on a picture that no longer moves)
+		int32 PathTrace = 0;              // a path-traced still: the pose is held and the path tracer adds this many samples a pixel
+		float PathTraceEv = 0.3f;         // stops of exposure added while it does: the path tracer's fog dims the light on its way
+		                                  // (the rasterizer's only adds its glow), its picture is about that much darker
 		bool bHud = false;
 		bool bHideHim = false;
 	};
@@ -83,6 +91,12 @@ private:
 	FVector ShotDir = FVector::ForwardVector;  // from there to the camera, and the picture's up: the bone's axes in the world,
 	FVector ShotUp = FVector::UpVector;        // followed slowly (the camera does not swing with every nod of a head)
 	int32 ShotQuitFrames = 0;
+	int32 StillStage = 0;                 // 0 none, 1 the scene is held for a still, 2 its picture is taken
+	int32 StillFrames = 0;                // frames left until the picture
+	bool bStillPathTraced = false;
+	void BeginStill(const FShot& S);
+	void EndStill();
+	void HoldScene(bool bHold);
 	bool bRecordAll = false;
 	int32 RecordFrame = 0;
 	FString ShotsDir;

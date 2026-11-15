@@ -107,6 +107,9 @@ void AMishiPlayerController::StartShots(const FString& File)
 		if (O->TryGetNumberField(TEXT("push"), N)) S.Push = float(N);
 		if (O->TryGetNumberField(TEXT("at"), N)) S.At = float(N);
 		if (O->TryGetNumberField(TEXT("his_style"), N)) S.HisStyle = int32(N);
+		if (O->TryGetNumberField(TEXT("hold"), N)) S.Hold = float(N);
+		if (O->TryGetNumberField(TEXT("pt"), N)) S.PathTrace = int32(N);
+		if (O->TryGetNumberField(TEXT("pt_ev"), N)) S.PathTraceEv = float(N);
 		if (S.Name.IsEmpty())
 			S.Name = FString::Printf(TEXT("shot_%02d"), Shots.Num());
 	}
@@ -133,6 +136,19 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	}
 	C->bAuto = false;
 	Cam->bLimits = false;
+	if (StillStage == 1)
+	{
+		// the scene is held: nothing moves until the picture is taken
+		if (--StillFrames <= 0)
+		{
+			const FShot& Held = Shots[ShotIndex];
+			FScreenshotRequest::RequestScreenshot(ShotsDir / (Held.Name + TEXT(".png")), Held.bHud, false);
+			StillStage = 2;
+		}
+		return;
+	}
+	if (StillStage == 2)
+		EndStill();
 	if (bRecordAll && !SoundHandle.IsValid())
 	{
 		SoundHandle = C->OnSound.AddWeakLambda(this, [this](const FString& Kind, const FString& File, float Volume)
@@ -167,6 +183,7 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			return;
 		}
 		const FShot& S = Shots[ShotIndex];
+		UE_LOG(LogMishi, Log, TEXT("shot %d %s"), ShotIndex, *S.Name);       // the log's time stamps tell how long each one took
 		ShotFrames.Add(RecordFrame);
 		if (S.Phase >= 0)
 			C->GoPhase(S.Phase);
@@ -223,8 +240,60 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	ShotClock += DeltaTime;
 	if (bRecordAll)
 		FScreenshotRequest::RequestScreenshot(ShotsDir / FString::Printf(TEXT("frame_%05d.bmp"), RecordFrame++), S.bHud, false);     // .bmp: no time lost packing
-	else if (ShotClock >= S.Seconds)
-		FScreenshotRequest::RequestScreenshot(ShotsDir / (S.Name + TEXT(".png")), S.bHud, false);
+	else if (ShotClock >= S.Seconds && !S.Name.StartsWith(TEXT("_")))
+	{
+		if (S.PathTrace > 0 || S.Hold > 0.f)
+			BeginStill(S);
+		else
+			FScreenshotRequest::RequestScreenshot(ShotsDir / (S.Name + TEXT(".png")), S.bHud, false);
+	}
+}
+
+void AMishiPlayerController::HoldScene(bool bHold)
+{
+	// the bodies keep their pose (no clip time, no morph targets, no skinning update), the camera its place and its lens
+	if (AMishiCouple* C = Couple.Get())
+	{
+		C->SetActorTickEnabled(!bHold);
+		for (USkeletalMeshComponent* Body : {C->GetHer(), C->GetHim()})
+			if (Body)
+				Body->SetComponentTickEnabled(!bHold);
+	}
+	if (AMishiCameraPawn* Cam = GetCam())
+		Cam->SetActorTickEnabled(!bHold);
+}
+
+void AMishiPlayerController::BeginStill(const FShot& S)
+{
+	HoldScene(true);
+	bStillPathTraced = S.PathTrace > 0;
+	if (bStillPathTraced)
+	{
+		// the path tracer adds one sample a frame to a picture that must not change meanwhile; then its denoiser runs once
+		ConsoleCommand(FString::Printf(TEXT("r.PathTracing.SamplesPerPixel %d"), S.PathTrace));
+		ConsoleCommand(TEXT("r.PathTracing.ProgressDisplay 0"));
+		ConsoleCommand(FString::Printf(TEXT("r.ExposureOffset %.3f"), S.PathTraceEv));
+		ConsoleCommand(TEXT("ShowFlag.PathTracing 1"));
+		StillFrames = S.PathTrace + 20;
+	}
+	else
+		StillFrames = FMath::Max(1, FMath::RoundToInt(S.Hold * 30.f));
+	StillStage = 1;
+	UE_LOG(LogMishi, Log, TEXT("still %s: the pose is held for %d frames%s"), *S.Name, StillFrames, bStillPathTraced ? TEXT(", path traced") : TEXT(""));
+}
+
+void AMishiPlayerController::EndStill()
+{
+	if (bStillPathTraced)
+	{
+		ConsoleCommand(TEXT("ShowFlag.PathTracing 0"));
+		ConsoleCommand(TEXT("r.ExposureOffset 0"));
+		ConsoleCommand(TEXT("r.PathTracing.SamplesPerPixel -1"));
+		ConsoleCommand(TEXT("r.PathTracing.ProgressDisplay 1"));
+	}
+	bStillPathTraced = false;
+	HoldScene(false);
+	StillStage = 0;
 }
 
 void AMishiPlayerController::WriteTimeline() const

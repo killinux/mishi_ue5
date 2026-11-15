@@ -21,7 +21,8 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 | `Tools/mishi_look.py` | 关卡：摆房间、灯光设计、天空、雾、后期；所有"观感"数字都在 `LOOK` 表里 |
 | `Tools/shots_lookdev.json` / `tour.json` | 检查图的机位表 / 巡游片的分镜表 |
 | `Tools/sheet.py` / `tour_audio.py` | 检查图拼版 / 巡游片的音轨合成 |
-| `Config/` | Lumen + 虚拟阴影、无烘焙光照、手动曝光、TSR、SM6；默认地图和 GameMode；传统 FBX 导入；动画默认 60 fps；Python 远程执行 |
+| `Config/` | 硬件光追 Lumen + 虚拟阴影、路径追踪、无烘焙光照、手动曝光、TSR 100%、SM6；默认地图和 GameMode；传统 FBX 导入；动画默认 60 fps；Python 远程执行 |
+| `Tools/shots_stills.json` | 路径追踪定格图的机位表 |
 
 | C++ 类 | 作用 |
 |---|---|
@@ -52,6 +53,7 @@ python Tools\sheet.py Saved\MishiShots\eros15_07_v9        # 拼成 _sheet.jpg
 powershell -File Tools\ue.ps1 cpp                          # 改了 C++：存盘关编辑器 -> 编译 -> 重开编辑器
 powershell -File Tools\ue.ps1 play                         # 窗口运行，自己操作
 powershell -File Tools\ue.ps1 tour -ResX 1920 -ResY 1080   # 巡游片 -> out\eros15_07_tour.mp4（带语音、音效、BGM）；加 -KeepFrames 保留逐帧 BMP（约 16 GB）
+powershell -File Tools\ue.ps1 stills                       # 路径追踪定格图 -> out\stills\eros15_07\*.png（2560×1440，每张约 2 分钟）
 ```
 
 导入步骤：`textures audio bodies room materials level`（不写 = 全部；`--force` 重导）。改了 `mishi_look.py` 的 `LOOK`
@@ -110,7 +112,7 @@ Unity 点 `(x, y, z)` 米 → UE `(-x, z, y) × 100` 厘米；四元数 `(x, y, 
 | `M_Mishi_Eye` | 按游戏 Pinkcore/Heros/Eye 的公式重建：巩膜 / 虹膜、视差、角膜缘、眼睑遮蔽；Clear Coat 做角膜高光 |
 | `M_Mishi_Hair` | 发片：Default Lit + 各向异性（沿发丝），时间抖动的软边（TSR 解成半透明），阴影只由发束的实心部分投 |
 | `M_Mishi_Lash` / `M_Mishi_Tears` | 睫毛眉毛（逐像素受光的半透明）/ 下眼睑的泪线（只有高光） |
-| `M_Mishi_Lit` / `_Masked` / `_Glass` | 房间：平铺、MGA、自发光；都带逐物体的"镜头淡出"（见下） |
+| `M_Mishi_Lit` / `_Masked` / `_Glass` | 房间：平铺、MGA、自发光；都带逐物体的"镜头淡出"（见下）；一律双面（光追需要，见"踩过的坑"） |
 | `M_Mishi_Flat` / `_Hidden` | 游戏的剪影 / 还没移植的 Effect 层 |
 
 Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线贴图翻转绿色通道；遮罩贴图线性。
@@ -130,6 +132,26 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
 - 天空球 + 实时捕获的天光、指数高度雾 + 体积雾（窗口的光柱）、无界后期体积（手动曝光、bloom、暗角、色差）。
 
 URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）。
+
+## 硬件光追和路径追踪
+
+项目打开了硬件光追（`r.RayTracing`），Lumen 的光线打在真实的三角形上 —— 包括两具身体，软件 Lumen（距离场 + 表面缓存）
+根本看不见它们。Lumen 的档位在 `LOOK["lumen_ray_lighting"]`，下面是 RTX 4090 笔记本、1600×900、100% 渲染分辨率下量到的：
+
+| 档位 | 帧率 | 说明 |
+|---|---|---|
+| 软件 Lumen | 46 | 间接光偏亮（同一块墙的画面亮度 89，路径追踪基准 68）；它看到的场景只是一团粗糙的距离场 |
+| `surface_cache` | 65 | 光线命中处从表面缓存取光照；身体没有表面缓存，只起遮挡作用 |
+| `reflections`（默认） | 51 | 反射在命中处自己算光照：身体会出现在反射里 |
+| `hit` | 45 | 间接光也在命中处算：皮肤的颜色会映到旁边的床单上 |
+
+后三档的亮度都和路径追踪基准对得上（同一机位：墙 64–74 对 68，皮肤 187–190 对 186）。
+
+**路径追踪定格图**：机位表里给一个机位加 `"pt": 400`（每像素采样数）。到了拍摄时刻，两具身体和镜头停住
+（不再推进动作、形态键、蒙皮），切到路径追踪，每帧累积一个采样，采满后降噪（NNE 降噪器，引擎自带）再存图。
+路径追踪里是真的次表面散射、真的面光源软阴影、发光球真的照亮周围、真的景深。它的雾会把光在路上削弱
+（光栅化的雾只加辉光不减光），所以拍摄时加 0.3 档曝光（`pt_ev`）。`"hold": 秒数` 是不用路径追踪的定格：
+身体停住，让 Lumen 和时域超分在静止画面上收敛。名字以 `_` 开头的机位不存图，只用来推进场景（按阶段键、等过渡）。
 
 ## 镜头
 
@@ -180,12 +202,20 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
   两具身体的 `BoundsScale` 设成 6。
 - 灯光强度 / 曝光怎么改都不变的"高光"多半不是高光：这次鼻梁上的白斑是太阳直射的漫反射。
   用 `ShowFlag.Specular 0`、`ShowFlag.DirectLighting 0` 这类开关一次跑一组对照最快。
+- **光追管线默认在后台编译**，没编完的命中着色器用"全黑替代材质"顶着：路径追踪出来一片黑，带命中光照的反射也是黑的。
+  出图和录片的进程加 `-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0`（`ue.ps1` 已带）；第一次链接要 3 分钟，之后有缓存。
+- **房间外壳是朝内的单面平面**：光线从背面来就直接穿过去。Lumen 给表面缓存算阴影的光线因此让太阳穿过屋顶和墙，
+  整个房间都在反弹阳光（间接光是基准的 3 倍）。房间材质一律双面，再加 `r.LumenScene.DirectLighting.HardwareRayTracing.ForceTwoSided=1`。
+  判断谁对谁错的办法：出一张路径追踪做基准，再用 `r.Lumen.Visualize.IndirectDiffuse 1` 加各类灯的 ShowFlag 看间接光从哪盏灯来。
+- 5.8 里 `r.Lumen.HardwareRayTracing.LightingMode`：0 表面缓存、**1 间接光和反射都算命中光照、2 只有反射**（和后期体积里枚举的顺序不一样）。
+  不确定的控制台变量用 `<变量名> ?` 打帮助到日志里看；`DumpConsoleCommands` 的输出不进日志。
+- 桌面默认的渲染分辨率是自动的（1600×900 时只有 84%，靠 TSR 放大）：配置里写死 `r.ScreenPercentage=100`。
 - 写文件工具会把内容里的 `\uXXXX` 变成字符；bash heredoc 会吃反斜杠。带反斜杠的脚本用写文件工具写。
 
 ## 还没做 / UE5 能继续发挥的方向
 
 - Effect 层（液体、粒子）：Niagara + 贴花
 - 头发和胸部的弹簧物理（游戏里蜜室的动作是手 K 的，头发不动）
-- Groom 发丝、Substrate 皮肤（带汗水涂层）、硬件光追 Lumen、路径追踪定格 / Movie Render Queue
+- Groom 发丝、Substrate 皮肤（带汗水涂层）、路径追踪的动态片段（Movie Render Queue）
 - 回忆模式、换身体、更多场景和房间、选择菜单
 - 打包（Cook）：中文字体在打包版里需要带一个 CJK 字体

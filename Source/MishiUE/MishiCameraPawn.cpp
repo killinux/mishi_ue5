@@ -179,7 +179,11 @@ void AMishiCameraPawn::UpdateSeeThrough(float DeltaSeconds, const FVector& Pos)
 		if (FMath::Abs(F.Amount - Want) < 0.01f)
 			F.Amount = Want;
 		F.Hold = FMath::Max(F.Hold - DeltaSeconds, 0.f);
-		Comp->SetCustomPrimitiveDataFloat(0, F.Amount);   // LensFade of the room's materials
+		if (F.Amount != F.Sent)
+		{
+			Comp->SetCustomPrimitiveDataFloat(0, F.Amount);      // LensFade of the room's materials
+			F.Sent = F.Amount;
+		}
 		if (F.Amount <= 0.f && F.Hold <= 0.f)
 			It.RemoveCurrent();
 	}

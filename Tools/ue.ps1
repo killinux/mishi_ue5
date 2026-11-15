@@ -6,9 +6,10 @@
 #   powershell -File Tools\ue.ps1 play   [-Slice eros15_07]
 #   powershell -File Tools\ue.ps1 tour   [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (Tools\tour.json frame by frame -> out\<slice>_tour.mp4, with sound)
 #   powershell -File Tools\ue.ps1 shots  [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (look-dev stills -> Saved\MishiShots\<slice>_<tag>)
+#   powershell -File Tools\ue.ps1 stills [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (path-traced stills: Tools\shots_stills.json -> out\stills\<slice>, 2560x1440 offscreen)
 #   powershell -File Tools\ue.ps1 editor
 param(
-    [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'editor')] [string]$Do = 'find',
+    [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'stills', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
     [switch]$Force,
     [string]$Shots = '',
@@ -67,6 +68,10 @@ if ($text -notmatch [regex]::Escape($want)) {
     Write-Host "MishiUE.uproject: EngineAssociation -> $Version"
 }
 
+# for shots and the tour: every ray tracing hit shader is there before the first frame (built in the background, the missing ones
+# are a black stand-in material - black reflections, a black path-traced picture), and the picture is rendered at its full size
+$Capture = '-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0,r.ScreenPercentage=100'
+
 function Invoke-Editor([string]$arguments, [string]$label) {
     Write-Host "$label ..."
     $p = Start-Process -FilePath $Editor -ArgumentList $arguments -PassThru -Wait
@@ -120,7 +125,7 @@ switch ($Do) {
         if (-not $Shots) { $Shots = Join-Path $Root 'Tools\tour.json' }
         $frames = Join-Path $Root "Saved\MishiTour\$Slice"
         if (Test-Path $frames) { Remove-Item -Recurse -Force $frames }
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended -log" 'tour'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended -log" 'tour'
         $out = Join-Path $Root 'out'
         New-Item -ItemType Directory -Force $out | Out-Null
         $mp4 = Join-Path $out "${Slice}_tour$(if ($Tag) { '_' + $Tag }).mp4"
@@ -138,12 +143,25 @@ switch ($Do) {
         if (-not $KeepFrames -and (Test-Path $mp4) -and (Get-Item $mp4).Length -gt 0) { Remove-Item (Join-Path $frames 'frame_*.bmp') -Force }
         exit $code
     }
+    'stills' {
+        # path-traced stills of held poses: Tools\shots_stills.json (or -Shots <file>) -> out\stills\<slice>[_<tag>]\<name>.png,
+        # rendered offscreen (2560x1440 unless -ResX / -ResY say otherwise); about two minutes a still at 512 samples
+        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\shots_stills.json' }
+        if (-not $PSBoundParameters.ContainsKey('ResX')) { $ResX = 2560 }
+        if (-not $PSBoundParameters.ContainsKey('ResY')) { $ResY = 1440 }
+        $dir = Join-Path $Root "out\stills\$Slice$(if ($Tag) { '_' + $Tag })"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'stills'
+        & python (Join-Path $Root 'Tools\sheet.py') $dir --cols 3 --width 853
+        Get-ChildItem $dir -Filter *.png | ForEach-Object { $_.FullName }
+        exit $code
+    }
     'shots' {
         # look-dev stills: Tools\shots_lookdev.json (or -Shots <file>) -> Saved\MishiShots\<slice>[_<tag>]\<name>.png
         if (-not $Shots) { $Shots = Join-Path $Root 'Tools\shots_lookdev.json' }
         $dir = Join-Path $Root "Saved\MishiShots\$Slice$(if ($Tag) { '_' + $Tag })"
         if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'shots'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'shots'
         Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
         exit $code
     }

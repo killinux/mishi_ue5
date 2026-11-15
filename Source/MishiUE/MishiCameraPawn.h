@@ -135,6 +135,7 @@ private:
 	{
 		float Amount = 0.f;               // 0 whole .. 1 gone
 		float Hold = 0.f;                 // seconds it still stays away after the last time it stood in the way
+		float Sent = -1.f;                // what the component was told last (told again only when it changes)
 	};
 	TMap<TWeakObjectPtr<UPrimitiveComponent>, FFade> Faded;   // what hides the couple now or did a moment ago
 	bool IsSlender(const UPrimitiveComponent* Comp) const;

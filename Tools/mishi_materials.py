@@ -22,7 +22,7 @@ import os
 
 import unreal
 
-VERSION = 5
+VERSION = 6
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -433,7 +433,9 @@ def build_surface(d, name, kind):
     between the lens and the couple - a temporal dither in the view (TSR resolves it into a soft fade), while the shadow pass
     keeps the object whole: its shadow and its bounce stay in the room."""
     blend = {"lit": unreal.BlendMode.BLEND_MASKED, "masked": unreal.BlendMode.BLEND_MASKED, "glass": unreal.BlendMode.BLEND_TRANSLUCENT}[kind]
-    g = Graph(name, blend=blend, two_sided=(kind != "lit"))
+    # two-sided, the plain kind too: the room's shell is planes facing inwards, and a ray that comes from behind a one-sided
+    # triangle goes through it - the shadow rays of Lumen's hit lighting let the sun in through the roof and the walls
+    g = Graph(name, blend=blend, two_sided=True)
     setp(g.mat, "dithered_lod_transition", False)
     if kind == "glass":
         setp(g.mat, "translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE_PER_PIXEL_LIGHTING)

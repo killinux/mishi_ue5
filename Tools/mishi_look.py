@@ -14,7 +14,7 @@ LOOK = {
     # the sun: the room's baked window light (the game bakes it into the lightmaps; here it is the one real sun)
     "sun_scale": 1.0,
     "sun_source_angle": 1.2,            # degrees: soft-edged window shadows
-    "sun_shaft": 4.0,                   # volumetric scattering: the shafts through the window
+    "sun_shaft": 2.5,                   # volumetric scattering: the shafts through the window
     # the sun on skin: the bodies are on lighting channel 1 only, the sun on channel 0 - a twin of it on channel 1 gives them
     # this share of it.  The full sun is 2.7 x the key: it burnt every patch of skin it touched out to white.
     "sun_on_characters": 0.3,
@@ -33,6 +33,21 @@ LOOK = {
     "fog_density": 0.15,                # x 1/1000 per cm: a haze thick enough for the window light to show in the air of a 5 m room
     "fog_falloff": 0.05,
     "fog_scattering": 0.35,             # x the room's fog colour
+    # Lumen on hardware ray tracing (r.RayTracing in the project): the rays hit the real triangles, the bodies' too.
+    # "surface_cache": what a ray hits is lit from the surface cache - the bodies have none: they only shade (65 fps at
+    # 1600x900 on the RTX 4090 laptop); "reflections": reflections light what they hit themselves - the bodies show in them
+    # (51 fps); "hit": the bounce light does so too, skin colours the sheet next to it (45 fps).  Software Lumen: 46 fps, and
+    # its bounce light is a third brighter than the path tracer's; these three agree with it.
+    "lumen_ray_lighting": "reflections",
+    "lumen_final_gather_quality": 2.0,
+    "lumen_reflection_quality": 2.0,
+    "lumen_scene_lighting_quality": 1.0,
+    "lumen_scene_detail": 2.0,
+    "lumen_max_reflection_bounces": 2,
+    # the path tracer, for stills (a shot's "pt" in the shots file): samples a pixel, bounces, the clamp against fireflies
+    "path_tracing_samples": 512,
+    "path_tracing_bounces": 16,
+    "path_tracing_max_intensity": 12.0,
 }
 
 eal = unreal.EditorAssetLibrary
@@ -185,6 +200,7 @@ def place_lights(eas, lights, anchor, warn):
                 setp(c2, "light_source_angle", LOOK["sun_source_angle"], warn)
                 setp(c2, "atmosphere_sun_light", False, warn)
                 setp(c2, "forward_shading_priority", 0, warn)
+                setp(c2, "indirect_lighting_intensity", 0.0, warn)      # Lumen's surface cache knows no channels: no second bounce of the sun
                 light_common(c2, L, color, warn, 0.0, room=False)
                 n += 1
         elif kind == "Directional":
@@ -303,7 +319,21 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
     pairs = [("auto_exposure_method", unreal.AutoExposureMethod.AEM_MANUAL), ("auto_exposure_apply_physical_camera_exposure", False),
              ("auto_exposure_bias", LOOK["exposure_bias"]), ("bloom_intensity", post.get("bloom_intensity", 0.6)),
              ("bloom_threshold", post.get("bloom_threshold", 0.55)), ("vignette_intensity", 0.25), ("scene_fringe_intensity", 0.25),
-             ("motion_blur_amount", 0.0)]
+             ("motion_blur_amount", 0.0),
+             ("lumen_ray_lighting_mode", {"surface_cache": unreal.LumenRayLightingModeOverride.SURFACE_CACHE,
+                                          "reflections": unreal.LumenRayLightingModeOverride.HIT_LIGHTING_FOR_REFLECTIONS,
+                                          "hit": unreal.LumenRayLightingModeOverride.HIT_LIGHTING}.get(
+                                              LOOK["lumen_ray_lighting"], unreal.LumenRayLightingModeOverride.DEFAULT)),
+             ("lumen_final_gather_quality", LOOK["lumen_final_gather_quality"]),
+             ("lumen_reflection_quality", LOOK["lumen_reflection_quality"]),
+             ("lumen_scene_lighting_quality", LOOK["lumen_scene_lighting_quality"]),
+             ("lumen_scene_detail", LOOK["lumen_scene_detail"]),
+             ("lumen_max_reflection_bounces", LOOK["lumen_max_reflection_bounces"]),
+             ("path_tracing_samples_per_pixel", LOOK["path_tracing_samples"]),
+             ("path_tracing_max_bounces", LOOK["path_tracing_bounces"]),
+             ("path_tracing_max_path_intensity", LOOK["path_tracing_max_intensity"]),
+             ("path_tracing_enable_denoiser", True),
+             ("path_tracing_enable_reference_dof", True)]
     for k, v in pairs:
         try:
             s.set_editor_property("override_" + k, True)
