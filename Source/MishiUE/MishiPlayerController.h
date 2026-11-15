@@ -56,3 +56,29 @@ private:
 	float FromYaw = 0.f, FromY = 0.5f, FromZoom = 1.f;
 	void StartTour();
 	void StepTour(float DeltaTime);
+
+	// -MishiShots=<file.json> -MishiShotsDir=<dir>: look-dev stills.  Each shot presses a phase button (or none), sets a view - round
+	// the rig's target or round a bone of hers - lets the scene run for some seconds and saves one frame <dir>/<name>.png; then quit.
+	struct FShot
+	{
+		FString Name;
+		int32 Phase = -1;
+		float Seconds = 2.f;
+		float YawOffset = 0.f;            // degrees from the game's own yaw
+		float Y = -1.f;                   // orbit height 0..1 (< 0: the game's own)
+		float ZoomScale = 1.f;            // x the game's own zoom
+		FString Bone;                     // orbit round this bone of hers (empty: the rig's target)
+		FVector BoneOffset = FVector::ZeroVector;   // cm, world axes, added to the bone's place
+		float Fov = 0.f;                  // vertical degrees (0: the game's)
+		bool bHud = false;
+		bool bHideHim = false;
+	};
+	TArray<FShot> Shots;
+	bool bShots = false;
+	int32 ShotIndex = -1;
+	float ShotClock = 0.f;
+	int32 ShotQuitFrames = 0;
+	FString ShotsDir;
+	void StartShots(const FString& File);
+	void StepShots(float DeltaTime);
+};

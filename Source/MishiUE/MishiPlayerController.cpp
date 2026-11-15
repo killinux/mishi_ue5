@@ -6,7 +6,12 @@
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "InputCoreTypes.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -41,6 +46,97 @@ void AMishiPlayerController::BeginPlay()
 	}
 	if (FParse::Param(FCommandLine::Get(), TEXT("MishiTour")))
 		StartTour();
+	FString ShotsFile;
+	if (FParse::Value(FCommandLine::Get(), TEXT("MishiShots="), ShotsFile))
+		StartShots(ShotsFile);
+}
+
+void AMishiPlayerController::StartShots(const FString& File)
+{
+	FString Text;
+	TSharedPtr<FJsonValue> Root;
+	if (!FFileHelper::LoadFileToString(Text, *File) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Root) || !Root.IsValid()
+		|| Root->Type != EJson::Array)
+	{
+		UE_LOG(LogMishi, Error, TEXT("shots: %s is not a JSON list"), *File);
+		ConsoleCommand(TEXT("quit"));
+		return;
+	}
+	if (!FParse::Value(FCommandLine::Get(), TEXT("MishiShotsDir="), ShotsDir))
+		ShotsDir = FPaths::ProjectSavedDir() / TEXT("MishiShots");
+	IFileManager::Get().MakeDirectory(*ShotsDir, true);
+	for (const TSharedPtr<FJsonValue>& V : Root->AsArray())
+	{
+		const TSharedPtr<FJsonObject> O = V.IsValid() && V->Type == EJson::Object ? V->AsObject() : nullptr;
+		if (!O.IsValid())
+			continue;
+		FShot& S = Shots.AddDefaulted_GetRef();
+		double N = 0.0;
+		O->TryGetStringField(TEXT("name"), S.Name);
+		if (O->TryGetNumberField(TEXT("phase"), N)) S.Phase = int32(N);
+		if (O->TryGetNumberField(TEXT("seconds"), N)) S.Seconds = float(N);
+		if (O->TryGetNumberField(TEXT("yaw"), N)) S.YawOffset = float(N);
+		if (O->TryGetNumberField(TEXT("y"), N)) S.Y = float(N);
+		if (O->TryGetNumberField(TEXT("zoom"), N)) S.ZoomScale = float(N);
+		if (O->TryGetNumberField(TEXT("fov"), N)) S.Fov = float(N);
+		O->TryGetStringField(TEXT("bone"), S.Bone);
+		O->TryGetBoolField(TEXT("hud"), S.bHud);
+		O->TryGetBoolField(TEXT("hide_him"), S.bHideHim);
+		const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
+		if (O->TryGetArrayField(TEXT("offset"), Off) && Off && Off->Num() >= 3)
+			S.BoneOffset = FVector((*Off)[0]->AsNumber(), (*Off)[1]->AsNumber(), (*Off)[2]->AsNumber());
+		if (S.Name.IsEmpty())
+			S.Name = FString::Printf(TEXT("shot_%02d"), Shots.Num());
+	}
+	bShots = Shots.Num() > 0;
+	ShotIndex = -1;
+	ShotClock = 0.f;
+	UE_LOG(LogMishi, Log, TEXT("shots: %d from %s into %s"), Shots.Num(), *File, *ShotsDir);
+}
+
+void AMishiPlayerController::StepShots(float DeltaTime)
+{
+	AMishiCouple* C = Couple.Get();
+	AMishiCameraPawn* Cam = GetCam();
+	if (!C || !C->IsReady() || !Cam)
+		return;
+	if (ShotQuitFrames > 0)
+	{
+		// the last frame's file is written a frame or two after it was asked for
+		if (--ShotQuitFrames == 0)
+			ConsoleCommand(TEXT("quit"));
+		return;
+	}
+	C->bAuto = false;
+	Cam->bLimits = false;
+	if (ShotIndex < 0 || ShotClock >= Shots[ShotIndex].Seconds)
+	{
+		++ShotIndex;
+		ShotClock = 0.f;
+		if (ShotIndex >= Shots.Num())
+		{
+			UE_LOG(LogMishi, Log, TEXT("shots: done"));
+			ShotIndex = Shots.Num() - 1;
+			ShotQuitFrames = 6;
+			return;
+		}
+		const FShot& S = Shots[ShotIndex];
+		if (S.Phase >= 0)
+			C->GoPhase(S.Phase);
+		C->SetShowHim(!S.bHideHim);
+		Cam->SetFovOverride(S.Fov);
+		Cam->SetView(Cam->DefaultYaw() + S.YawOffset, S.Y < 0.f ? Cam->GetY() : S.Y, Cam->DefaultZoom() * S.ZoomScale);
+		if (Hud.IsValid())
+			Hud->SetVisibility(S.bHud ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed);
+	}
+	const FShot& S = Shots[ShotIndex];
+	if (!S.Bone.IsEmpty() && C->GetHer())
+		Cam->SetTargetWorld(C->GetHer()->GetBoneLocation(FName(*S.Bone)) + S.BoneOffset);
+	else
+		Cam->ClearTargetWorld();
+	ShotClock += DeltaTime;
+	if (ShotClock >= S.Seconds)
+		FScreenshotRequest::RequestScreenshot(ShotsDir / (S.Name + TEXT(".png")), S.bHud, false);
 }
 
 void AMishiPlayerController::StartTour()
@@ -139,6 +235,11 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 		StepTour(DeltaTime);
 		return;
 	}
+	if (bShots)
+	{
+		StepShots(DeltaTime);
+		return;
+	}
 	AMishiCouple* C = Couple.Get();
 	AMishiCameraPawn* Cam = GetCam();
 
@@ -174,7 +275,9 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 				C->GoPhase(I);
 		if (WasInputKeyJustPressed(EKeys::SpaceBar)) C->bAuto = !C->bAuto;
 		if (WasInputKeyJustPressed(EKeys::V)) C->VoiceLanguage = (C->VoiceLanguage + 1) % 3;
-		if (WasInputKeyJustPressed(EKeys::M)) C->SetShowHim(!C->bShowHim);
+		if (WasInputKeyJustPressed(EKeys::M)) C->SetHisStyle((C->HisStyle + 1) % 3);
+		if (WasInputKeyJustPressed(EKeys::X)) C->SetSfx(!C->bSfx);
+		if (WasInputKeyJustPressed(EKeys::B)) C->bSkinState = !C->bSkinState;
 	}
 	if (WasInputKeyJustPressed(EKeys::H)) ToggleHud();
 }

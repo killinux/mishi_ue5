@@ -9,6 +9,8 @@
 
 class UAnimSequence;
 class UAudioComponent;
+class UMaterialInterface;
+class UMaterialParameterCollection;
 class USkeletalMesh;
 class USkeletalMeshComponent;
 class USoundBase;
@@ -56,6 +58,27 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	bool bShowHim = true;
 
+	/** How he is drawn: 0 his own skin, 1 the game's flat silhouette, 2 not at all. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	int32 HisStyle = 0;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	TObjectPtr<UMaterialInterface> HisBodySkin;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	TObjectPtr<UMaterialInterface> HisBodySilhouette;
+
+	/** MPC_Mishi: Wet (sweat) and Flush (blush), which the skin materials read; they follow the phase. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	TObjectPtr<UMaterialParameterCollection> SkinState;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSkinState = true;
+
+	/** Seconds the skin takes to follow a new phase. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float SkinEase = 4.f;
+
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TObjectPtr<USceneComponent> Origin;
 
@@ -71,6 +94,16 @@ public:
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TObjectPtr<UAudioComponent> Music;
 
+	/** The part's own sound loop (the game's per-part SFX). */
+	UPROPERTY(VisibleAnywhere, Category = "Mishi")
+	TObjectPtr<UAudioComponent> Sfx;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSfx = true;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float SfxVolume = 0.8f;
+
 	const FMishiSlice& Slice() const { return Data; }
 	bool IsReady() const { return bReady; }
 	int32 CurrentPhase() const { return PhaseNow; }
@@ -81,6 +114,12 @@ public:
 	void GoPhase(int32 Wanted);
 	void Enter(const FString& PartName, float Blend);
 	void SetShowHim(bool bShow);
+	void SetSfx(bool bOn);
+	void SetHisStyle(int32 Style);
+	float GetWet() const { return Wet; }
+	float GetFlush() const { return Flush; }
+	USkeletalMeshComponent* GetHer() const { return Her; }
+	USkeletalMeshComponent* GetHim() const { return His; }
 
 	/** A point / direction given in Unity's space relative to the couple's origin, in Unreal's world. */
 	FVector UnityToWorld(const FVector& P) const;
@@ -99,6 +138,9 @@ private:
 	float AutoTimer = 10.f;
 	int32 LineIndex = 0;
 	float LineTimer = 0.f;
+	float Wet = 0.f;
+	float Flush = 0.f;
+	void StepSkin(float DeltaSeconds);
 
 	bool LoadSlice();
 	void PlaceBodies();
@@ -107,6 +149,7 @@ private:
 	USoundBase* FindSound(const FString& File) const;
 	UMishiAnimInstance* Player(USkeletalMeshComponent* Body) const;
 	void PlayVoice(const FString& PartName);
+	void ApplySfx(const FString& PartName);
 	void ResetAutoTimer();
 	void ApplyShapes();
 };

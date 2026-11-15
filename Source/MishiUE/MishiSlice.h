@@ -43,6 +43,14 @@ struct FMishiPhase
 };
 
 struct FMishiVoice { FString Part, Jp, En; };
+
+/** The game's sound loop of a part (her prefab's "Audio Source/phaseNN_k" node). */
+struct FMishiSfx
+{
+	FString Part, File;
+	float Volume = 1.f;
+	bool bLoop = true;
+};
 struct FMishiLine { FString Id, Zh, En, Ja; };
 
 /** The free-look rig of the game's Cinemachine camera: three orbits (height, radius), a yaw, a zoom scaling the orbit, a target
@@ -86,6 +94,7 @@ struct FMishiSlice
 	TArray<FMishiPart> Parts;
 	TMap<FString, FMishiShapeTrack> Tracks;
 	TArray<FMishiVoice> Voices;
+	TArray<FMishiSfx> Sfx;
 	FString MusicFile;
 	float MusicVolume = 0.35f;
 	TArray<FMishiLine> Lines;

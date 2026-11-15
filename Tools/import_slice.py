@@ -1,31 +1,48 @@
 """Mishi UE5: bring one slice exported by Unity (Import/<scene>_<room>/, MishiUeExport.ExportSlice) into the project.
 
-    UnrealEditor.exe MishiUE.uproject -ExecutePythonScript="Tools/import_slice.py eros15_07 --quit"
-    (or in the editor's Python console:  py Tools/import_slice.py eros15_07)
+    python Tools/ue_remote.py Tools/import_slice.py eros15_07 [steps] [--force]      in the open editor (the fast loop)
+    powershell -File Tools\\ue.ps1 import [-Slice eros15_07] [-Force]                  starts an editor for it, quits after
 
-Steps (each one reuses what an earlier run made unless --force):
-  textures   textures/*.png -> /Game/Mishi/<slice>/Textures; normal maps (OpenGL green -> flipped), masks linear (TC_Masks)
-  audio      audio/*.ogg -> WAV (ffmpeg) -> /Game/Mishi/<slice>/Audio; the room's music loops
-  bodies     female.fbx / male.fbx -> skeletal meshes with morph targets + every take as an AnimSequence
-  room       room_meshes.fbx -> one static mesh per distinct mesh (RM_*); room.fbx (whole room, combined) for the space check
-  materials  master materials /Game/Mishi/Materials/M_Mishi_* (made once) + an instance per Unity material (materials.json)
-  level      /Game/Mishi/Maps/<slice>: the room's 683 placements, its lights, a sky light, a post-process volume, the couple
-  check      the placed room has to cover room.fbx: the Unity -> Unreal space map (MishiUE.h) proven on every import
+steps (default: all) - any of: textures audio bodies room materials level
+  textures   the room's textures (Import/<slice>/textures) and the characters' own from the game's material cache
+             (ripper_tpose's hq_material_data.py: <cache>/<id>.json + textures/) - normal maps flipped to Unreal's green, masks linear
+  audio      voices, the parts' sound loops, the room's music: OGG -> WAV (ffmpeg) -> SoundWave; music and loops loop
+  bodies     female.fbx / male.fbx -> skeletal meshes with morph targets; then every take as an AnimSequence at 60 fps
+  room       room_meshes.fbx -> a static mesh per distinct mesh (RM_*); room.fbx whole, for the space check
+  materials  the masters (mishi_materials.py) + an instance per material: the characters' from the game's own data, the room's
+             from materials.json
+  level      /Game/Mishi/Maps/<slice>: the room's placements, lights, sky, fog, post-process volume, the couple
 Writes Import/<slice>/ue_import_report.json.
 """
+import importlib
 import json
 import math
 import os
+import re
 import struct
 import subprocess
 import sys
 import time
+import traceback
 import zlib
 
 import unreal
 
+PROJECT = os.path.abspath(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+TOOLS = os.path.join(PROJECT, "Tools")
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
+import mishi_anim  # noqa: E402
+import mishi_look  # noqa: E402
+import mishi_materials  # noqa: E402
+
+importlib.reload(mishi_anim)
+importlib.reload(mishi_materials)
+importlib.reload(mishi_look)
+
 FFMPEG = r"D:\Program Files\ffmpeg\bin\ffmpeg.exe"
-LIGHT_SCALE = math.pi        # URP light intensity -> lux / candela (URP's diffuse has no 1/pi, Unreal's has)
+HQ_CACHE = os.environ.get("ROE_HQ_CACHE", r"E:\game_export\RiseOfEros\_meta\_hq_materials")
+ALL_STEPS = ("textures", "audio", "bodies", "room", "materials", "level")
 
 asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 eal = unreal.EditorAssetLibrary
@@ -45,63 +62,40 @@ def warn(msg):
 def setp(obj, name, value):
     try:
         obj.set_editor_property(name, value)
+        return True
     except Exception as e:  # a property that moved between engine versions: say so, go on
         warn("%s.%s: %s" % (obj.get_class().get_name(), name, e))
+        return False
 
 
 # ---------------------------------------------------------------------------------------------------------------- arguments
 def parse_args():
     """Arguments after the script, or (what Tools/ue.ps1 uses: -ExecutePythonScript takes a bare path best) MISHI_SLICE,
-    MISHI_FORCE=1, MISHI_QUIT=1 in the environment."""
+    MISHI_STEPS, MISHI_FORCE=1, MISHI_QUIT=1 in the environment."""
     args = [a for a in sys.argv[1:] if not a.lower().endswith(".py")]
-    slice_name = next((a for a in args if not a.startswith("--")), os.environ.get("MISHI_SLICE", "eros15_07"))
+    words = [a for a in args if not a.startswith("--")]
+    slice_name = words[0] if words else os.environ.get("MISHI_SLICE", "eros15_07")
+    steps = [w for w in words[1:] if w in ALL_STEPS] or [s for s in os.environ.get("MISHI_STEPS", "").split(",") if s in ALL_STEPS]
     force = "--force" in args or os.environ.get("MISHI_FORCE") == "1"
     quit_after = "--quit" in args or os.environ.get("MISHI_QUIT") == "1"
-    return slice_name, force, quit_after
+    return slice_name, tuple(steps) or ALL_STEPS, force, quit_after
 
 
-SLICE, FORCE, QUIT = parse_args()
-PROJECT = os.path.abspath(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+SLICE, STEPS, FORCE, QUIT = parse_args()
 SRC = os.path.join(PROJECT, "Import", SLICE)
 DST = "/Game/Mishi/" + SLICE
-MATS = "/Game/Mishi/Materials"
 MAP = "/Game/Mishi/Maps/" + SLICE
 
 
-# ---------------------------------------------------------------------------------------------------------------- Unity -> Unreal
-# Unity (m, left-handed, Y up) -> what Unreal's FBX import makes of the Unity FBX Exporter's files: (-x, z, y) * 100 (see MishiUE.h)
-def ue_pos(p):
-    return unreal.Vector(-p[0] * 100.0, p[2] * 100.0, p[1] * 100.0)
-
-
-def ue_dir(d):
-    return unreal.Vector(-d[0], d[2], d[1])
-
-
-def ue_quat(q):
-    return unreal.Quat(-q[0], q[2], q[1], q[3])
-
-
-def ue_scale(s):
-    return unreal.Vector(s[0], s[2], s[1])
-
-
-def unity_rotate(q, v):
-    """v rotated by the Unity quaternion q (x, y, z, w) - plain Hamilton algebra, as Unity does it."""
-    x, y, z, w = q
-    vx, vy, vz = v
-    # t = 2 * cross(q.xyz, v); v' = v + w * t + cross(q.xyz, t)
-    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
-    return (vx + w * tx + (y * tz - z * ty), vy + w * ty + (z * tx - x * tz), vz + w * tz + (x * ty - y * tx))
-
-
 # ---------------------------------------------------------------------------------------------------------------- import helpers
-def import_tasks(files, dest, options=None):
+def import_tasks(files, dest, options=None, names=None):
     tasks = []
-    for f in files:
+    for i, f in enumerate(files):
         t = unreal.AssetImportTask()
         t.set_editor_property("filename", f)
         t.set_editor_property("destination_path", dest)
+        if names:
+            t.set_editor_property("destination_name", names[i])
         t.set_editor_property("automated", True)
         t.set_editor_property("replace_existing", True)
         t.set_editor_property("save", True)
@@ -147,78 +141,117 @@ def write_png(path, w, h, rgba):
 
 
 # ---------------------------------------------------------------------------------------------------------------- textures
-NORMAL_PROPS = {"_BumpMap", "_DetailNormalMap", "_NormalMap"}
-MASK_PROPS = {"_MetallicGlossMap", "_MaskMap", "_OcclusionMap", "_SkinLutMap"}
+NORMAL_SLOTS = {"_BumpMap", "_DetailNormalMap", "_NormalMap", "_EyeBumpMap"}
+MASK_SLOTS = {"_MetallicGlossMap", "_MaskMap", "_OcclusionMap", "_SkinLutMap", "_OcclusionMaskMap", "_IrisMaskTex", "_EyeOcclusionMap", "_ShiftNoiseMap"}
 
 
-def texture_roles(materials):
-    roles = {}
-    for m in materials.values():
-        for prop, file in m.get("textures", {}).items():
-            stem = os.path.splitext(file)[0]
-            role = "normal" if prop in NORMAL_PROPS else "mask" if prop in MASK_PROPS else "color"
-            roles.setdefault(stem, role)
-    return roles
+def role_of(slot):
+    return "normal" if slot in NORMAL_SLOTS else "mask" if slot in MASK_SLOTS else "color"
 
 
-def set_texture_role(tex, role):
+def set_texture_role(tex, role, character=False):
+    TC = unreal.TextureCompressionSettings
     if role == "normal":
-        setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_NORMALMAP)
+        setp(tex, "compression_settings", TC.TC_NORMALMAP)
         setp(tex, "srgb", False)
         setp(tex, "flip_green_channel", True)      # Unity's normal maps are OpenGL style (green up), Unreal's DirectX
     elif role == "mask":
-        setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_MASKS)
+        setp(tex, "compression_settings", TC.TC_MASKS)
         setp(tex, "srgb", False)
+    elif character:
+        setp(tex, "compression_settings", TC.TC_BC7)   # skin, hair and eyes in close-up: no DXT blocks in the gradients
     eal.save_loaded_asset(tex)
 
 
-def step_textures(materials):
-    t0 = time.time()
-    folder = DST + "/Textures"
-    src = os.path.join(SRC, "textures")
-    files = sorted(os.path.join(src, f) for f in os.listdir(src) if f.lower().endswith((".png", ".tga", ".jpg", ".jpeg")))
-    todo = [f for f in files if FORCE or not exists(folder, os.path.splitext(os.path.basename(f))[0])]
-    import_tasks(todo, folder)
-    roles = texture_roles(materials)
-    textures = {}
-    for f in files:
-        stem = os.path.splitext(os.path.basename(f))[0]
-        tex = unreal.load_asset(asset_path(folder, stem))
-        if tex is None:
-            warn("texture %s did not import" % stem)
-            continue
-        textures[stem] = tex
-        if os.path.join(src, os.path.basename(f)) in todo or FORCE:
-            set_texture_role(tex, roles.get(stem, "color"))
-    report["steps"]["textures"] = {"files": len(files), "imported": len(todo), "seconds": round(time.time() - t0, 1)}
-    log("textures: %d (%d imported) in %.0f s" % (len(files), len(todo), time.time() - t0))
-    return textures
-
-
 def default_textures():
-    """Our own 4x4 white (colour), white (linear mask), black and flat-normal textures: the masters' parameter defaults, each with
-    the sampler type its parameter has (the engine's white square is sRGB and would not do as a mask default)."""
-    folder = MATS + "/Defaults"
+    """4x4 white / black (colour), white / black (linear mask) and a flat normal: the masters' parameter defaults, each with the
+    sampler type its parameter has (the engine's white square is sRGB and would not do as a mask default)."""
+    folder = mishi_materials.MATS + "/Defaults"
     tmp = os.path.join(PROJECT, "Saved", "MishiDefaults")
     os.makedirs(tmp, exist_ok=True)
-    want = {"T_Mishi_White": ((255, 255, 255, 255), "color"), "T_Mishi_Black": ((0, 0, 0, 255), "color"),
-            "T_Mishi_MaskWhite": ((255, 255, 255, 255), "mask"), "T_Mishi_FlatNormal": ((128, 128, 255, 255), "normal")}
+    want = {"white": ("T_Mishi_White", (255, 255, 255, 255), "color"), "black": ("T_Mishi_Black", (0, 0, 0, 255), "color"),
+            "mask": ("T_Mishi_MaskWhite", (255, 255, 255, 255), "mask"), "mask_black": ("T_Mishi_MaskBlack", (0, 0, 0, 255), "mask"),
+            "flat": ("T_Mishi_FlatNormal", (128, 128, 255, 255), "normal")}
     out = {}
-    for name, (rgba, role) in want.items():
+    for key, (name, rgba, role) in want.items():
         if not exists(folder, name):
             path = os.path.join(tmp, name + ".png")
             write_png(path, 4, 4, rgba)
             import_tasks([path], folder)
             tex = unreal.load_asset(asset_path(folder, name))
+            TC = unreal.TextureCompressionSettings
             if role == "normal":
-                setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_NORMALMAP)
+                setp(tex, "compression_settings", TC.TC_NORMALMAP)
                 setp(tex, "srgb", False)
             elif role == "mask":
-                setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_MASKS)
+                setp(tex, "compression_settings", TC.TC_MASKS)
                 setp(tex, "srgb", False)
             eal.save_loaded_asset(tex)
-        out[name] = unreal.load_asset(asset_path(folder, name))
+        out[key] = unreal.load_asset(asset_path(folder, name))
     return out
+
+
+def import_textures(wanted, folder, character=False):
+    """wanted: {asset name: (file, role)}.  Imports what is not there yet (all with --force); returns {asset name: texture}."""
+    todo = [(n, f, r) for n, (f, r) in sorted(wanted.items()) if os.path.isfile(f) and (FORCE or not exists(folder, n))]
+    import_tasks([f for _, f, _ in todo], folder, names=[n for n, _, _ in todo])
+    out = {}
+    fresh = {n for n, _, _ in todo}
+    for n, (f, role) in wanted.items():
+        tex = unreal.load_asset(asset_path(folder, n)) if exists(folder, n) else None
+        if tex is None:
+            warn("texture %s (%s) is not there" % (n, f))
+            continue
+        if n in fresh:
+            set_texture_role(tex, role, character)
+        out[n] = tex
+    return out, len(todo)
+
+
+# ---------------------------------------------------------------------------------------------------------------- game material data
+def character_ids(slice_data):
+    ids = []
+    for who in ("female", "male"):
+        m = re.match(r"pc_([a-z]\d+)", (slice_data.get(who) or {}).get("root") or "")
+        if m:
+            ids.append((who, m.group(1)))
+    return ids
+
+
+def game_materials(slice_data):
+    """The characters' materials as the game defines them (ripper_tpose's cache: every float, colour and texture slot of the
+    material bundles), by material name; her data wins where both lists name a material (the shared head)."""
+    out = {}
+    for who, cid in character_ids(slice_data):
+        path = os.path.join(HQ_CACHE, cid + ".json")
+        if not os.path.isfile(path):
+            warn("no game material data %s (run ripper_tpose/scripts/riseoferos/hq_material_data.py %s --all)" % (path, cid))
+            continue
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        overrides = d.get("overrides", {})
+        for name, m in d.get("materials", {}).items():
+            if "@" in name or name in out:
+                continue
+            tex = {}
+            tiling = {}
+            for slot, t in m.get("textures", {}).items():
+                tname = overrides.get(name, {}).get(slot, t["texture"])
+                tex[slot] = tname
+                sc, of = t.get("scale", [1, 1]), t.get("offset", [0, 0])
+                if sc != [1, 1] and sc != [1.0, 1.0] or of != [0, 0] and of != [0.0, 0.0]:
+                    tiling[slot] = [sc[0], sc[1], of[0], of[1]]
+            out[name] = {"source": "game:" + cid, "who": who, "textures": tex, "tiling": tiling, "floats": dict(m.get("floats", {})),
+                         "colors": dict(m.get("colors", {})), "keywords": list(m.get("keywords", []))}
+    return out
+
+
+def cache_texture_file(name, slot):
+    """A texture of the game cache; normal maps as the standard RGB copy the cache keeps beside the DXT5nm original."""
+    base = os.path.join(HQ_CACHE, "textures", name)
+    if role_of(slot) == "normal" and os.path.isfile(base + "__nrm.png"):
+        return base + "__nrm.png"
+    return base + ".png"
 
 
 # ---------------------------------------------------------------------------------------------------------------- audio
@@ -233,10 +266,8 @@ def step_audio(slice_data):
         stem, ext = os.path.splitext(f)
         if ext.lower() not in (".ogg", ".wav", ".mp3"):
             continue
-        wav = os.path.join(wav_dir, stem + ".wav")
-        if ext.lower() == ".wav":
-            wav = os.path.join(src, f)
-        elif not os.path.exists(wav):
+        wav = os.path.join(src, f) if ext.lower() == ".wav" else os.path.join(wav_dir, stem + ".wav")
+        if not os.path.exists(wav):
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", os.path.join(src, f), "-acodec", "pcm_s16le", wav], check=False)
         if os.path.exists(wav):
             wavs.append(wav)
@@ -245,23 +276,29 @@ def step_audio(slice_data):
     todo = [w for w in wavs if FORCE or not exists(folder, os.path.splitext(os.path.basename(w))[0])]
     import_tasks(todo, folder)
     sounds = list_assets(folder, unreal.SoundWave)
-    music = os.path.splitext((slice_data.get("music") or {}).get("file") or "")[0]
+    loops = {os.path.splitext((slice_data.get("music") or {}).get("file") or "")[0]}
+    loops |= {os.path.splitext(s["file"])[0] for s in slice_data.get("sfx", []) if s.get("loop", True)}
     for s in sounds:
-        if s.get_name() == music:
-            setp(s, "looping", True)
+        want = s.get_name() in loops
+        if bool(s.get_editor_property("looping")) != want:
+            setp(s, "looping", want)
             eal.save_loaded_asset(s)
-    report["steps"]["audio"] = {"sounds": len(sounds), "imported": len(todo), "music": music, "seconds": round(time.time() - t0, 1)}
-    log("audio: %d sounds (%d imported), music %s" % (len(sounds), len(todo), music))
+    report["steps"]["audio"] = {"sounds": len(sounds), "imported": len(todo), "looping": sorted(n for n in loops if n), "seconds": round(time.time() - t0, 1)}
+    log("audio: %d sounds (%d imported), %d looping" % (len(sounds), len(todo), len([n for n in loops if n])))
     return sounds
 
 
+def load_sounds():
+    return list_assets(DST + "/Audio", unreal.SoundWave)
+
+
 # ---------------------------------------------------------------------------------------------------------------- bodies
-def skeletal_options():
+def mesh_options():
     o = unreal.FbxImportUI()
     setp(o, "import_mesh", True)
     setp(o, "import_as_skeletal", True)
     setp(o, "mesh_type_to_import", unreal.FBXImportType.FBXIT_SKELETAL_MESH)
-    setp(o, "import_animations", True)
+    setp(o, "import_animations", False)
     setp(o, "import_materials", False)
     setp(o, "import_textures", False)
     setp(o, "create_physics_asset", False)
@@ -272,29 +309,74 @@ def skeletal_options():
     setp(sk, "force_front_x_axis", False)
     setp(sk, "import_meshes_in_bone_hierarchy", True)
     setp(sk, "normal_import_method", unreal.FBXNormalImportMethod.FBXNIM_IMPORT_NORMALS)
-    an = o.get_editor_property("anim_sequence_import_data")
-    setp(an, "animation_length", unreal.FBXAnimationLengthImportType.FBXALIT_EXPORTED_TIME)
-    setp(an, "import_bone_tracks", True)
-    setp(an, "import_custom_attribute", True)
-    setp(an, "remove_redundant_keys", False)
-    setp(an, "do_not_import_curve_with_zero", False)
-    setp(an, "import_meshes_in_bone_hierarchy", True)
+    setp(sk, "update_skeleton_reference_pose", False)
+    setp(sk, "use_t0_as_ref_pose", False)
+    setp(sk, "preserve_smoothing_groups", True)
+    setp(sk, "threshold_position", 0.00002)
+    setp(sk, "threshold_tangent_normal", 0.00002)
+    setp(sk, "threshold_uv", 0.0000001)
     return o
 
 
-def step_body(who, fbx_name):
+def anim_options(skeleton):
+    o = unreal.FbxImportUI()
+    setp(o, "import_mesh", False)
+    setp(o, "import_as_skeletal", False)
+    setp(o, "import_animations", True)
+    setp(o, "import_materials", False)
+    setp(o, "import_textures", False)
+    setp(o, "mesh_type_to_import", unreal.FBXImportType.FBXIT_ANIMATION)
+    setp(o, "original_import_type", unreal.FBXImportType.FBXIT_ANIMATION)
+    setp(o, "automated_import_should_detect_type", False)
+    setp(o, "skeleton", skeleton)
+    an = o.get_editor_property("anim_sequence_import_data")
+    setp(an, "animation_length", unreal.FBXAnimationLengthImportType.FBXALIT_EXPORTED_TIME)
+    # the game's clips are keyed on a 60 fps grid (every part's length x 60 is whole); left to itself the importer finds 1920 fps
+    # in the exporter's key times and refuses nine takes of ten
+    setp(an, "use_default_sample_rate", False)
+    setp(an, "custom_sample_rate", 60)
+    setp(an, "snap_to_closest_frame_boundary", True)
+    setp(an, "import_bone_tracks", True)
+    setp(an, "import_custom_attribute", False)
+    setp(an, "import_meshes_in_bone_hierarchy", True)
+    setp(an, "remove_redundant_keys", False)
+    setp(an, "convert_scene", True)
+    setp(an, "force_front_x_axis", False)
+    return o
+
+
+def step_body(who, fbx_name, clips):
     t0 = time.time()
     folder = "%s/%s" % (DST, who.capitalize())
     stem = os.path.splitext(fbx_name)[0]
-    if FORCE or not exists(folder, stem):
-        import_tasks([os.path.join(SRC, fbx_name)], folder, skeletal_options())
-    mesh = unreal.load_asset(asset_path(folder, stem))
+    fbx = os.path.join(SRC, fbx_name)
+    mesh = unreal.load_asset(asset_path(folder, stem)) if exists(folder, stem) else None
+    if FORCE or mesh is None or mesh.get_editor_property("skeleton") is None:
+        # (a mesh whose skeleton asset was never saved comes back without one: import again)
+        for sub in (folder + "/Anims", folder):
+            for a in list_assets(sub):
+                eal.delete_asset(a.get_path_name())
+        import_tasks([fbx], folder, mesh_options())
+        eal.save_directory(folder, only_if_is_dirty=False, recursive=True)
+    mesh = unreal.load_asset(asset_path(folder, stem)) if exists(folder, stem) else None
     if mesh is None:
         meshes = list_assets(folder, unreal.SkeletalMesh)
         mesh = meshes[0] if meshes else None
-    anims = list_assets(folder, unreal.AnimSequence)
-    info = {"mesh": mesh.get_path_name() if mesh else None, "anims": [a.get_name() for a in anims], "seconds": round(time.time() - t0, 1)}
+    info = {"mesh": mesh.get_path_name() if mesh else None, "seconds": 0}
+    anims = []
     if mesh is not None:
+        skeleton = mesh.get_editor_property("skeleton")
+        anim_folder = folder + "/Anims"
+        # the motion: from the per-frame tracks Unity sampled, not from the FBX takes (their translations read as zero)
+        anims = mishi_anim.build(who, os.path.join(SRC, who + "_anim"), skeleton, mesh, anim_folder, FORCE, warn)
+        keep = {a.get_name() for a in anims}
+        for a in list_assets(anim_folder, unreal.AnimSequence):
+            if a.get_name() not in keep:
+                eal.delete_asset(a.get_path_name())
+        got = {a.get_name(): round(a.get_play_length(), 3) for a in anims}
+        missing = [c for c in clips if not any(n == c or n.endswith("_" + c) for n in got)]
+        if missing:
+            warn("%s: no animation for %s" % (who, missing))
         try:
             b = mesh.get_bounds()
             info["bounds_origin_cm"] = [round(b.origin.x, 1), round(b.origin.y, 1), round(b.origin.z, 1)]
@@ -306,9 +388,17 @@ def step_body(who, fbx_name):
         except Exception as e:
             warn("%s morph targets: %s" % (who, e))
         info["materials"] = slot_names(mesh)
+        info["anims"] = got
+    info["seconds"] = round(time.time() - t0, 1)
     report["steps"][who] = info
-    log("%s: mesh %s, %d anims, %s" % (who, info["mesh"], len(anims), info.get("bounds_extent_cm")))
+    log("%s: mesh %s, %d anims" % (who, info["mesh"], len(anims)))
     return mesh, anims
+
+
+def load_body(who):
+    folder = "%s/%s" % (DST, who.capitalize())
+    meshes = list_assets(folder, unreal.SkeletalMesh)
+    return (meshes[0] if meshes else None), list_assets(folder + "/Anims", unreal.AnimSequence)
 
 
 # ---------------------------------------------------------------------------------------------------------------- room meshes
@@ -337,13 +427,18 @@ def step_room():
     folder = DST + "/Room"
     if FORCE or not list_assets(folder, unreal.StaticMesh):
         import_tasks([os.path.join(SRC, "room_meshes.fbx")], folder, static_options(False))
-    meshes = {m.get_name(): m for m in list_assets(folder, unreal.StaticMesh)}
     check_folder = DST + "/RoomCheck"
     if FORCE or not list_assets(check_folder, unreal.StaticMesh):
         import_tasks([os.path.join(SRC, "room.fbx")], check_folder, static_options(True))
-    check = list_assets(check_folder, unreal.StaticMesh)
-    report["steps"]["room"] = {"meshes": len(meshes), "check_mesh": check[0].get_path_name() if check else None, "seconds": round(time.time() - t0, 1)}
-    log("room: %d static meshes in %.0f s" % (len(meshes), time.time() - t0))
+    meshes, check = load_room()
+    report["steps"]["room"] = {"meshes": len(meshes), "check_mesh": check.get_path_name() if check else None, "seconds": round(time.time() - t0, 1)}
+    log("room: %d static meshes" % len(meshes))
+    return meshes, check
+
+
+def load_room():
+    meshes = {m.get_name(): m for m in list_assets(DST + "/Room", unreal.StaticMesh)}
+    check = list_assets(DST + "/RoomCheck", unreal.StaticMesh)
     return meshes, (check[0] if check else None)
 
 
@@ -351,204 +446,9 @@ def find_mesh(meshes, node):
     if node in meshes:
         return meshes[node]
     for name, m in meshes.items():
-        if name.endswith("_" + node) or name.endswith(node):
+        if name.endswith("_" + node):
             return m
     return None
-
-
-# ---------------------------------------------------------------------------------------------------------------- materials
-def new_material(name):
-    path = "%s/%s" % (MATS, name)
-    if eal.does_asset_exist(path):
-        eal.delete_asset(path)
-    return asset_tools.create_asset(name, MATS, unreal.Material, unreal.MaterialFactoryNew())
-
-
-def tex_param(mat, name, default, sampler, x, y):
-    node = mel.create_material_expression(mat, unreal.MaterialExpressionTextureSampleParameter2D, x, y)
-    setp(node, "parameter_name", name)
-    setp(node, "texture", default)
-    setp(node, "sampler_type", sampler)
-    return node
-
-
-def scalar_param(mat, name, value, x, y):
-    node = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, x, y)
-    setp(node, "parameter_name", name)
-    setp(node, "default_value", value)
-    return node
-
-
-def vector_param(mat, name, value, x, y):
-    node = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, x, y)
-    setp(node, "parameter_name", name)
-    setp(node, "default_value", value)
-    return node
-
-
-def op(mat, cls, a, a_out, b, b_out, x, y):
-    node = mel.create_material_expression(mat, cls, x, y)
-    mel.connect_material_expressions(a, a_out, node, "A")
-    mel.connect_material_expressions(b, b_out, node, "B")
-    return node
-
-
-def build_master(name, kind, defaults):
-    """kind: lit / masked / translucent / skin / hair / eye / unlit / hidden"""
-    mat = new_material(name)
-    S = unreal.MaterialSamplerType
-    white, black, mask_white, flat = defaults["T_Mishi_White"], defaults["T_Mishi_Black"], defaults["T_Mishi_MaskWhite"], defaults["T_Mishi_FlatNormal"]
-    MP = unreal.MaterialProperty
-    if kind == "hidden":
-        setp(mat, "blend_mode", unreal.BlendMode.BLEND_MASKED)
-        zero = mel.create_material_expression(mat, unreal.MaterialExpressionConstant, -300, 200)
-        setp(zero, "r", 0.0)
-        mel.connect_material_property(zero, "", MP.MP_OPACITY_MASK)
-        mel.recompile_material(mat)
-        return mat
-    base = tex_param(mat, "BaseMap", white, S.SAMPLERTYPE_COLOR, -1200, -300)
-    tint = vector_param(mat, "BaseColor", unreal.LinearColor(1, 1, 1, 1), -1200, -60)
-    col = op(mat, unreal.MaterialExpressionMultiply, base, "RGB", tint, "", -900, -250)
-    if kind == "unlit":
-        setp(mat, "shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
-        mel.connect_material_property(col, "", MP.MP_EMISSIVE_COLOR)
-        mel.recompile_material(mat)
-        return mat
-    mel.connect_material_property(col, "", MP.MP_BASE_COLOR)
-    normal = tex_param(mat, "NormalMap", flat, S.SAMPLERTYPE_NORMAL, -1200, 200)
-    mel.connect_material_property(normal, "RGB", MP.MP_NORMAL)
-    mga = tex_param(mat, "MaskMap", mask_white, S.SAMPLERTYPE_MASKS, -1200, 480)
-    metal = scalar_param(mat, "Metallic", 0.0, -900, 420)
-    smooth = scalar_param(mat, "Smoothness", 0.5, -900, 560)
-    m_out = op(mat, unreal.MaterialExpressionMultiply, mga, "R", metal, "", -650, 420)
-    g = op(mat, unreal.MaterialExpressionMultiply, mga, "G", smooth, "", -650, 560)
-    rough = mel.create_material_expression(mat, unreal.MaterialExpressionOneMinus, -450, 560)
-    mel.connect_material_expressions(g, "", rough, "")
-    mel.connect_material_property(m_out, "", MP.MP_METALLIC)
-    mel.connect_material_property(rough, "", MP.MP_ROUGHNESS)
-    mel.connect_material_property(mga, "B", MP.MP_AMBIENT_OCCLUSION)
-    # emission (rooms: lamps, candles)
-    emis = tex_param(mat, "EmissionMap", black, S.SAMPLERTYPE_COLOR, -1200, 800)
-    emis_col = vector_param(mat, "EmissionColor", unreal.LinearColor(0, 0, 0, 1), -1200, 1040)
-    e = op(mat, unreal.MaterialExpressionMultiply, emis, "RGB", emis_col, "", -900, 850)
-    mel.connect_material_property(e, "", MP.MP_EMISSIVE_COLOR)
-    alpha = op(mat, unreal.MaterialExpressionMultiply, base, "A", tint, "A", -900, -60)
-    if kind in ("masked", "hair"):
-        setp(mat, "blend_mode", unreal.BlendMode.BLEND_MASKED)
-        setp(mat, "two_sided", True)
-        cut = scalar_param(mat, "Cutoff", 0.5, -900, 80)
-        # (alpha - cutoff) + 0.5 against the fixed clip value 0.5: each instance keeps the Unity material's own cutoff
-        d = op(mat, unreal.MaterialExpressionSubtract, alpha, "", cut, "", -650, 0)
-        half = mel.create_material_expression(mat, unreal.MaterialExpressionConstant, -650, 120)
-        setp(half, "r", 0.5)
-        m = op(mat, unreal.MaterialExpressionAdd, d, "", half, "", -450, 40)
-        mel.connect_material_property(m, "", MP.MP_OPACITY_MASK)
-    elif kind == "translucent":
-        setp(mat, "blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
-        setp(mat, "two_sided", True)
-        setp(mat, "translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE_FORWARD_SHADING)
-        mel.connect_material_property(alpha, "", MP.MP_OPACITY)
-    elif kind == "skin":
-        setp(mat, "shading_model", unreal.MaterialShadingModel.MSM_SUBSURFACE_PROFILE)
-        scatter = scalar_param(mat, "Scatter", 1.0, -650, 700)
-        mel.connect_material_property(scatter, "", MP.MP_OPACITY)    # subsurface profile: opacity = how much the skin scatters
-    elif kind == "eye":
-        setp(mat, "shading_model", unreal.MaterialShadingModel.MSM_CLEAR_COAT)
-        coat = scalar_param(mat, "ClearCoat", 1.0, -650, 700)
-        coat_rough = scalar_param(mat, "ClearCoatRoughness", 0.03, -650, 800)
-        mel.connect_material_property(coat, "", MP.MP_CUSTOM_DATA0)
-        mel.connect_material_property(coat_rough, "", MP.MP_CUSTOM_DATA1)
-    if kind == "hair":
-        setp(mat, "shading_model", unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
-    mel.recompile_material(mat)
-    eal.save_loaded_asset(mat)
-    return mat
-
-
-MASTER_KINDS = {"M_Mishi_Lit": "lit", "M_Mishi_Masked": "masked", "M_Mishi_Translucent": "translucent", "M_Mishi_Skin": "skin",
-                "M_Mishi_Hair": "hair", "M_Mishi_Eye": "eye", "M_Mishi_Unlit": "unlit", "M_Mishi_Hidden": "hidden"}
-
-
-def masters(defaults):
-    out = {}
-    for name, kind in MASTER_KINDS.items():
-        if FORCE or not exists(MATS, name):
-            build_master(name, kind, defaults)
-        out[kind] = unreal.load_asset(asset_path(MATS, name))
-    return out
-
-
-def master_for(m):
-    shader = m.get("shader", "")
-    kind = m.get("kind", "")
-    if "Particles" in shader or kind == "liquid":
-        return "hidden"                      # the Effect layer is not in the FBX; its liquids come later
-    if shader.endswith("/Unlit") or shader == "Universal Render Pipeline/Unlit":
-        return "unlit"
-    if kind == "skin":
-        return "skin"
-    if kind == "eye":
-        return "eye"
-    if kind == "hair":
-        return "hair"
-    if kind == "lash":
-        return "masked"
-    if m.get("transparent"):
-        return "translucent"
-    if m.get("alpha_clip"):
-        return "masked"
-    return "lit"
-
-
-def step_materials(materials, textures, defaults):
-    t0 = time.time()
-    folder = DST + "/Materials"
-    parents = masters(defaults)
-    out = {}
-    for name, m in materials.items():
-        kind = master_for(m)
-        inst_name = "MI_" + name
-        path = "%s/%s" % (folder, inst_name)
-        mi = unreal.load_asset(path) if eal.does_asset_exist(path) else \
-            asset_tools.create_asset(inst_name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
-        mel.set_material_instance_parent(mi, parents[kind])
-        tx = m.get("textures", {})
-
-        def tex(prop):
-            return textures.get(os.path.splitext(tx[prop])[0]) if prop in tx else None
-
-        base = tex("_BaseMap") or tex("_IrisAlbedoTex") or tex("_MainTex")
-        if base is not None:
-            mel.set_material_instance_texture_parameter_value(mi, "BaseMap", base)
-        normal = tex("_BumpMap")
-        if normal is not None and kind not in ("unlit", "hidden"):
-            mel.set_material_instance_texture_parameter_value(mi, "NormalMap", normal)
-        mask = tex("_MetallicGlossMap")
-        if mask is not None and kind not in ("unlit", "hidden"):
-            mel.set_material_instance_texture_parameter_value(mi, "MaskMap", mask)
-        emis = tex("_EmissionMap")
-        cols = m.get("colors", {})
-        if emis is not None and kind not in ("unlit", "hidden"):
-            mel.set_material_instance_texture_parameter_value(mi, "EmissionMap", emis)
-            e = cols.get("_EmissionColor", [0, 0, 0, 1])
-            mel.set_material_instance_vector_parameter_value(mi, "EmissionColor", unreal.LinearColor(e[0], e[1], e[2], 1))
-        c = cols.get("_BaseColor") or cols.get("_Color") or cols.get("_IrisColor")
-        if c is not None:
-            mel.set_material_instance_vector_parameter_value(mi, "BaseColor", unreal.LinearColor(c[0], c[1], c[2], c[3]))
-        fl = m.get("floats", {})
-        if kind not in ("unlit", "hidden"):
-            if "_Metallic" in fl:
-                mel.set_material_instance_scalar_parameter_value(mi, "Metallic", fl["_Metallic"])
-            if "_Smoothness" in fl:
-                mel.set_material_instance_scalar_parameter_value(mi, "Smoothness", fl["_Smoothness"])
-        if kind in ("masked", "hair"):
-            mel.set_material_instance_scalar_parameter_value(mi, "Cutoff", fl.get("_Cutoff", 0.5) if kind == "hair" or m.get("alpha_clip") else 0.35)
-        eal.save_loaded_asset(mi)
-        out[name] = mi
-    report["steps"]["materials"] = {"instances": len(out), "seconds": round(time.time() - t0, 1),
-                                    "kinds": {k: sum(1 for m in materials.values() if master_for(m) == k) for k in MASTER_KINDS.values()}}
-    log("materials: %d instances in %.0f s" % (len(out), time.time() - t0))
-    return out
 
 
 def slot_names(mesh):
@@ -557,27 +457,83 @@ def slot_names(mesh):
     return [str(m.get_editor_property("material_slot_name")) for m in mesh.get_editor_property("static_materials")]
 
 
-def match_material(slot, instances):
-    if slot in instances:
-        return instances[slot]
-    low = slot.lower()
-    for name, mi in instances.items():
-        n = name.lower()
-        if low == n or low.startswith(n) or n.startswith(low):
-            return mi
-    return None
+# ---------------------------------------------------------------------------------------------------------------- materials
+MALE_BODY_SLOT = "MaleBody"          # the Unity project's stand-in for the game's pc_a00_UnlitSilhouette
 
 
-def assign_skeletal(mesh, instances):
-    mats = mesh.get_editor_property("materials")
+def step_materials(slice_data, room_materials, her, him):
+    """Returns ({material name: instance}, extras).  Character slots take the game's own definition when the cache has it."""
+    t0 = time.time()
+    defaults = default_textures()
+    masters = mishi_materials.build_masters(defaults, force=FORCE and "materials" in STEPS and len(STEPS) == 1)
+    game = game_materials(slice_data)
+
+    # what every material needs, so the textures can be brought in first
+    defs = {}
+    for name, m in room_materials.items():
+        tex = {slot: os.path.splitext(f)[0] for slot, f in m.get("textures", {}).items()}
+        defs[name] = {"source": "unity", "who": m.get("used_by", "room"), "shader": m.get("shader", ""), "textures": tex,
+                      "tiling": m.get("tiling", {}), "floats": m.get("floats", {}), "colors": m.get("colors", {}),
+                      "keywords": m.get("keywords", []), "transparent": m.get("transparent", False), "alpha_clip": m.get("alpha_clip", False)}
+    used = set()
+    for mesh in (her, him):
+        if mesh is not None:
+            used.update(slot_names(mesh))
+    for slot in used:
+        if slot in game:
+            defs[slot] = game[slot]
+    # the man: the game's flat silhouette, and his own skin for those who would rather see him
+    for extra in ("pc_a00_UnlitSilhouette", "pc_a00_nk_body"):
+        if extra in game and MALE_BODY_SLOT in used:
+            defs[extra] = game[extra]
+
+    room_tex, game_tex = {}, {}
+    for name, d in defs.items():
+        for slot, tname in d["textures"].items():
+            if d["source"] == "unity":
+                f = os.path.join(SRC, "textures", tname + ".png")
+                if not os.path.isfile(f):
+                    alt = [e for e in (".jpg", ".tga", ".jpeg") if os.path.isfile(os.path.join(SRC, "textures", tname + e))]
+                    f = os.path.join(SRC, "textures", tname + (alt[0] if alt else ".png"))
+                room_tex.setdefault(tname, (f, role_of(slot)))
+            else:
+                game_tex.setdefault(tname, (cache_texture_file(tname, slot), role_of(slot)))
+    textures, n1 = import_textures(room_tex, DST + "/Textures")
+    gtextures, n2 = import_textures(game_tex, "/Game/Mishi/Characters/Textures", character=True)
+    report["steps"]["textures"] = {"room": len(textures), "characters": len(gtextures), "imported": n1 + n2}
+    log("textures: %d room + %d character (%d imported)" % (len(textures), len(gtextures), n1 + n2))
+
+    instances = {}
+    kinds = {}
+    for name, d in defs.items():
+        lookup = gtextures if d["source"] != "unity" else textures
+        folder = "/Game/Mishi/Characters/Materials" if d["source"] != "unity" else DST + "/Materials"
+        mi, kind = mishi_materials.make_instance(name, d, lookup, masters, folder)
+        instances[name] = mi
+        kinds[kind] = kinds.get(kind, 0) + 1
+    report["steps"]["materials"] = {"instances": len(instances), "kinds": kinds, "from_game": sorted(n for n, d in defs.items() if d["source"] != "unity"),
+                                    "seconds": round(time.time() - t0, 1)}
+    log("materials: %d instances %s in %.0f s" % (len(instances), kinds, time.time() - t0))
+    return instances, masters
+
+
+def male_style_material(instances, style):
+    if style == "silhouette":
+        return instances.get("pc_a00_UnlitSilhouette")
+    return instances.get("pc_a00_nk_body") or instances.get("pc_a00_UnlitSilhouette")
+
+
+def assign_skeletal(mesh, instances, male_style="skin"):
+    mats = []
     missing = []
-    for m in mats:
+    for m in mesh.get_editor_property("materials"):          # (each element comes out as a copy: collect the changed copies)
         slot = str(m.get_editor_property("material_slot_name"))
-        mi = match_material(slot, instances)
+        mi = male_style_material(instances, male_style) if slot == MALE_BODY_SLOT else instances.get(slot)
         if mi is None:
             missing.append(slot)
-            continue
-        m.set_editor_property("material_interface", mi)
+        else:
+            m.set_editor_property("material_interface", mi)
+        mats.append(m)
     mesh.set_editor_property("materials", mats)
     eal.save_loaded_asset(mesh)
     if missing:
@@ -587,165 +543,14 @@ def assign_skeletal(mesh, instances):
 def assign_static(mesh, instances):
     missing = []
     for i, slot in enumerate(slot_names(mesh)):
-        mi = match_material(slot, instances)
+        mi = instances.get(slot)
         if mi is None:
             missing.append(slot)
             continue
-        mesh.set_material(i, mi)
-    eal.save_loaded_asset(mesh)
+        if mesh.get_material(i) != mi:
+            mesh.set_material(i, mi)
+    eal.save_loaded_asset(mesh, only_if_is_dirty=True)
     return missing
-
-
-# ---------------------------------------------------------------------------------------------------------------- level
-def open_level():
-    les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-    if eal.does_asset_exist(MAP):
-        les.load_level(MAP)
-    else:
-        try:
-            les.new_level(MAP, False)
-        except TypeError:
-            les.new_level(MAP)
-    eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-    for a in eas.get_all_level_actors():
-        if a.get_folder_path() and str(a.get_folder_path()).startswith("Mishi"):
-            eas.destroy_actor(a)
-    return les, eas
-
-
-def spawn(eas, cls, loc, rot, label, folder):
-    a = eas.spawn_actor_from_class(cls, loc, rot)
-    a.set_actor_label(label)
-    a.set_folder_path(folder)
-    return a
-
-
-def place_room(eas, meshes, instances, placements):
-    placed, missing = 0, set()
-    for p in placements:
-        mesh = find_mesh(meshes, p["mesh"])
-        if mesh is None:
-            missing.add(p["mesh"])
-            continue
-        rot = ue_quat(p["rotation"]).rotator()
-        a = spawn(eas, unreal.StaticMeshActor, ue_pos(p["position"]), rot, p["name"], "Mishi/Room")
-        comp = a.get_editor_property("static_mesh_component")
-        comp.set_static_mesh(mesh)
-        a.set_actor_scale3d(ue_scale(p["scale"]))
-        for i, mname in enumerate(p.get("materials", [])):
-            mi = instances.get(mname) if mname else None
-            if mi is not None:
-                comp.set_material(i, mi)
-        placed += 1
-    if missing:
-        warn("room: no mesh for %d nodes, e.g. %s" % (len(missing), sorted(missing)[:5]))
-    return placed
-
-
-def place_lights(eas, lights):
-    n = 0
-    for L in lights:
-        pos = ue_pos(L["position"])
-        fwd = ue_dir(unity_rotate(L["rotation"], (0.0, 0.0, 1.0)))     # a Unity light shines along its +Z, an Unreal one along +X
-        rot = unreal.MathLibrary.make_rot_from_x(fwd)
-        kind = L.get("type", "Point")
-        color = unreal.LinearColor(L["color"][0], L["color"][1], L["color"][2], 1.0)
-        intensity = L["intensity"] * LIGHT_SCALE
-        if kind == "Directional":
-            a = spawn(eas, unreal.DirectionalLight, pos, rot, L["name"], "Mishi/Lights")
-            c = a.get_component_by_class(unreal.DirectionalLightComponent)
-            setp(c, "intensity", intensity)
-        elif kind == "Spot":
-            a = spawn(eas, unreal.SpotLight, pos, rot, L["name"], "Mishi/Lights")
-            c = a.get_component_by_class(unreal.SpotLightComponent)
-            setp(c, "intensity_units", unreal.LightUnits.CANDELAS)
-            setp(c, "intensity", intensity)
-            setp(c, "attenuation_radius", L["range"] * 100.0)
-            setp(c, "outer_cone_angle", L["spot_angle"] * 0.5)
-            setp(c, "inner_cone_angle", L["spot_angle"] * 0.35)
-            setp(c, "source_radius", 3.0)
-        elif kind in ("Rectangle", "Area", "Disc"):
-            a = spawn(eas, unreal.RectLight, pos, rot, L["name"], "Mishi/Lights")
-            c = a.get_component_by_class(unreal.RectLightComponent)
-            setp(c, "intensity_units", unreal.LightUnits.CANDELAS)
-            setp(c, "intensity", intensity)
-            setp(c, "attenuation_radius", L["range"] * 100.0)
-            setp(c, "source_width", 120.0)
-            setp(c, "source_height", 120.0)
-        else:
-            a = spawn(eas, unreal.PointLight, pos, rot, L["name"], "Mishi/Lights")
-            c = a.get_component_by_class(unreal.PointLightComponent)
-            setp(c, "intensity_units", unreal.LightUnits.CANDELAS)
-            setp(c, "intensity", intensity)
-            setp(c, "attenuation_radius", L["range"] * 100.0)
-            setp(c, "source_radius", 2.0)
-        c.set_mobility(unreal.ComponentMobility.MOVABLE)
-        c.set_light_color(color, True)
-        setp(c, "cast_shadows", bool(L.get("shadows", True)))
-        n += 1
-    return n
-
-
-def place_environment(eas, post):
-    sky = spawn(eas, unreal.SkyLight, unreal.Vector(0, 0, 300), unreal.Rotator(0, 0, 0), "SkyLight", "Mishi/Lights")
-    sc = sky.get_component_by_class(unreal.SkyLightComponent)
-    sc.set_mobility(unreal.ComponentMobility.MOVABLE)
-    setp(sc, "real_time_capture", True)
-    setp(sc, "intensity", 0.6)
-    ppv = spawn(eas, unreal.PostProcessVolume, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), "Post", "Mishi/Lights")
-    setp(ppv, "unbound", True)
-    s = ppv.get_editor_property("settings")
-    pairs = [("auto_exposure_method", unreal.AutoExposureMethod.AEM_MANUAL), ("auto_exposure_apply_physical_camera_exposure", False),
-             ("auto_exposure_bias", 0.0), ("bloom_intensity", (post or {}).get("bloom_intensity", 0.6)),
-             ("bloom_threshold", (post or {}).get("bloom_threshold", 0.55))]
-    for k, v in pairs:
-        try:
-            s.set_editor_property("override_" + k, True)
-        except Exception:
-            pass
-        setp(s, k, v)
-    ppv.set_editor_property("settings", s)
-
-
-def place_couple(eas, slice_text, slice_data, her, her_anims, him, his_anims, sounds):
-    anchor = slice_data["anchor"]
-    rot = ue_quat(anchor["rotation"]).rotator()
-    a = spawn(eas, unreal.MishiCouple, ue_pos(anchor["position"]), rot, "Couple_" + slice_data.get("posture", SLICE), "Mishi")
-    setp(a, "slice_json", slice_text)
-    setp(a, "her_mesh", her)
-    setp(a, "his_mesh", him)
-    setp(a, "her_clips", her_anims)
-    setp(a, "his_clips", his_anims)
-    setp(a, "sounds", sounds)
-    a.rerun_construction_scripts() if hasattr(a, "rerun_construction_scripts") else None
-    return a
-
-
-def world_bounds(actors):
-    lo, hi = [1e18] * 3, [-1e18] * 3
-    for a in actors:
-        origin, ext = a.get_actor_bounds(False)
-        for i, (o, e) in enumerate(((origin.x, ext.x), (origin.y, ext.y), (origin.z, ext.z))):
-            lo[i] = min(lo[i], o - e)
-            hi[i] = max(hi[i], o + e)
-    return lo, hi
-
-
-def space_check(eas, check_mesh, room_actors):
-    """room.fbx, imported whole (its nodes baked at their world places by the FBX import), against the room placed from
-    room_instances.json with the Unity -> Unreal map: the two boxes agree when the map is right (a mirrored axis moves the box)."""
-    if check_mesh is None or not room_actors:
-        warn("space check skipped")
-        return None
-    box = check_mesh.get_bounding_box()
-    lo2, hi2 = [box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]
-    lo, hi = world_bounds(room_actors)
-    err = max(max(abs(a - b) for a, b in zip(lo, lo2)), max(abs(a - b) for a, b in zip(hi, hi2)))
-    res = {"placed_min": [round(v, 1) for v in lo], "placed_max": [round(v, 1) for v in hi],
-           "fbx_min": [round(v, 1) for v in lo2], "fbx_max": [round(v, 1) for v in hi2], "max_error_cm": round(err, 1), "ok": err < 25.0}
-    report["steps"]["space_check"] = res
-    (log if res["ok"] else warn)("space check: placed room vs room.fbx differ by %.1f cm at most (%s)" % (err, "OK" if res["ok"] else "WRONG MAP?"))
-    return res
 
 
 # ---------------------------------------------------------------------------------------------------------------- main
@@ -759,58 +564,52 @@ def main():
         materials = json.load(f)
     with open(os.path.join(SRC, "room_instances.json"), encoding="utf-8") as f:
         placements = json.load(f)["placements"]
-    log("slice %s: %s, %d parts, %d placements, %d materials" % (SLICE, slice_data.get("title"), len(slice_data["parts"]), len(placements), len(materials)))
+    log("slice %s: %s, %d parts, %d placements, %d materials; steps %s%s" % (
+        SLICE, slice_data.get("title"), len(slice_data["parts"]), len(placements), len(materials), ",".join(STEPS), " (force)" if FORCE else ""))
 
-    defaults = default_textures()
-    textures = step_textures(materials)
-    sounds = step_audio(slice_data)
-    her, her_anims = step_body("female", "female.fbx")
-    him, his_anims = step_body("male", "male.fbx")
-    meshes, check_mesh = step_room()
-    instances = step_materials(materials, textures, defaults)
-    if her is not None:
-        assign_skeletal(her, instances)
-    if him is not None:
-        assign_skeletal(him, instances)
-    room_missing = set()
-    for m in meshes.values():
-        room_missing.update(assign_static(m, instances))
-    if room_missing:
-        warn("room slots without a material: %s" % sorted(room_missing)[:10])
+    sounds = step_audio(slice_data) if "audio" in STEPS else load_sounds()
+    clips_f = sorted({p["female_clip"] for p in slice_data["parts"] if p.get("female_clip")})
+    clips_m = sorted({p["male_clip"] for p in slice_data["parts"] if p.get("male_clip")})
+    if "bodies" in STEPS:
+        her, her_anims = step_body("female", "female.fbx", clips_f)
+        him, his_anims = step_body("male", "male.fbx", clips_m)
+    else:
+        her, her_anims = load_body("female")
+        him, his_anims = load_body("male")
+    meshes, check_mesh = step_room() if "room" in STEPS else load_room()
 
-    les, eas = open_level()
-    placed = place_room(eas, meshes, instances, placements)
-    lights = place_lights(eas, slice_data.get("lights", []))
-    place_environment(eas, slice_data.get("post"))
-    couple = place_couple(eas, slice_text, slice_data, her, her_anims, him, his_anims, sounds)
-    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
-    try:
-        ws = world.get_world_settings()
-        setp(ws, "default_game_mode", unreal.MishiGameMode)
-    except Exception as e:
-        warn("world settings: %s" % e)
-    room_actors = [a for a in eas.get_all_level_actors() if str(a.get_folder_path()) == "Mishi/Room"]
-    space_check(eas, check_mesh, room_actors)
-    les.save_current_level()
+    instances, masters = {}, {}
+    if "materials" in STEPS or "textures" in STEPS or "level" in STEPS:
+        instances, masters = step_materials(slice_data, materials, her, him)
+        if her is not None:
+            assign_skeletal(her, instances)
+        if him is not None:
+            assign_skeletal(him, instances)
+        room_missing = set()
+        for m in meshes.values():
+            room_missing.update(assign_static(m, instances))
+        if room_missing:
+            warn("room slots without a material: %s" % sorted(room_missing)[:10])
+
+    if "level" in STEPS:
+        info = mishi_look.build_level(MAP, SLICE, slice_text, slice_data, placements, meshes, instances, masters, her, her_anims, him, his_anims,
+                                      sounds, check_mesh, warn)
+        report["steps"]["level"] = info
     eal.save_directory("/Game/Mishi", only_if_is_dirty=True, recursive=True)
-    report["steps"]["level"] = {"map": MAP, "placed": placed, "lights": lights, "couple": couple.get_name() if couple else None}
     report["seconds"] = round(time.time() - t0, 1)
-    with open(os.path.join(SRC, "ue_import_report.json"), "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=1)
-    log("done in %.0f s: %d placements, %d lights, %d warnings -> %s" % (time.time() - t0, placed, lights, len(report["warnings"]), MAP))
+    log("done in %.0f s, %d warnings" % (time.time() - t0, len(report["warnings"])))
 
 
 try:
     main()
-except Exception as e:
-    import traceback
+except Exception:
     report["error"] = traceback.format_exc()
     unreal.log_error("[MISHI] import failed: " + traceback.format_exc())
+finally:
     try:
         with open(os.path.join(SRC, "ue_import_report.json"), "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=1)
     except Exception:
         pass
-finally:
     if QUIT:
         unreal.SystemLibrary.quit_editor()

@@ -5,6 +5,9 @@
 #include "Components/AudioComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialParameterCollection.h"
 #include "Sound/SoundBase.h"
 #include "Misc/Paths.h"
 
@@ -34,6 +37,9 @@ AMishiCouple::AMishiCouple()
 	Music->SetupAttachment(Origin);
 	Music->bAutoActivate = false;
 	Music->bIsUISound = true;              // the room's music is not placed in the room
+	Sfx = CreateDefaultSubobject<UAudioComponent>(TEXT("Sfx"));
+	Sfx->SetupAttachment(Origin);
+	Sfx->bAutoActivate = false;
 }
 
 bool AMishiCouple::LoadSlice()
@@ -60,7 +66,34 @@ void AMishiCouple::PlaceBodies()
 		His->SetSkeletalMeshAsset(HisMesh);
 	Her->SetRelativeTransform(Data.FemaleOffset.ToUE());
 	His->SetRelativeTransform(Data.MaleOffset.ToUE());
+	SetHisStyle(HisStyle);
+}
+
+void AMishiCouple::SetHisStyle(int32 Style)
+{
+	HisStyle = FMath::Clamp(Style, 0, 2);
+	bShowHim = HisStyle != 2;
 	His->SetVisibility(bShowHim);
+	// the body's slot keeps the name of the Unity project's stand-in material
+	UMaterialInterface* Body = HisStyle == 1 && HisBodySilhouette ? HisBodySilhouette.Get() : HisBodySkin.Get();
+	if (Body && His->GetMaterialIndex(TEXT("MaleBody")) != INDEX_NONE)
+		His->SetMaterialByName(TEXT("MaleBody"), Body);
+}
+
+void AMishiCouple::StepSkin(float DeltaSeconds)
+{
+	// sweat and blush go towards the phase's level, as the scene builds up
+	static const float FlushByPhase[4] = {0.1f, 0.35f, 0.6f, 0.9f};
+	static const float WetByPhase[4] = {0.f, 0.2f, 0.45f, 0.8f};
+	const int32 Ph = FMath::Clamp(PhaseNow, 0, 3);
+	const float K = SkinEase > 0.f ? 1.f - FMath::Exp(-DeltaSeconds / SkinEase) : 1.f;
+	Flush = FMath::Lerp(Flush, bSkinState ? FlushByPhase[Ph] : 0.f, K);
+	Wet = FMath::Lerp(Wet, bSkinState ? WetByPhase[Ph] : 0.f, K);
+	if (SkinState)
+	{
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinState, TEXT("Wet"), Wet);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinState, TEXT("Flush"), Flush);
+	}
 }
 
 void AMishiCouple::OnConstruction(const FTransform& Transform)
@@ -168,13 +201,13 @@ void AMishiCouple::Enter(const FString& PartName, float Blend)
 	if (UMishiAnimInstance* A = Player(His))
 		A->Play(FindClip(HisClips, P.MaleClip), P.bLoop, Blend);
 	ApplyShapes();
+	ApplySfx(P.Name);
 	PlayVoice(P.Name);
 }
 
 void AMishiCouple::SetShowHim(bool bShow)
 {
-	bShowHim = bShow;
-	His->SetVisibility(bShowHim);
+	SetHisStyle(bShow ? (HisStyle == 2 ? 0 : HisStyle) : 2);
 }
 
 void AMishiCouple::PlayVoice(const FString& PartName)
@@ -189,6 +222,35 @@ void AMishiCouple::PlayVoice(const FString& PartName)
 		Voice->SetSound(S);
 		Voice->Play();
 	}
+}
+
+void AMishiCouple::SetSfx(bool bOn)
+{
+	bSfx = bOn;
+	if (!bSfx)
+		Sfx->Stop();
+	else if (const FMishiPart* P = PartNow())
+		ApplySfx(P->Name);
+}
+
+void AMishiCouple::ApplySfx(const FString& PartName)
+{
+	// as the game: the phaseNN_k node of the part pk plays, the others are off; a transition part keeps what plays
+	if (!PartName.StartsWith(TEXT("p")) || !PartName.Mid(1).IsNumeric())
+		return;
+	const FMishiSfx* X = Data.Sfx.FindByPredicate([&PartName](const FMishiSfx& S) { return S.Part == PartName; });
+	USoundBase* Sound = X && bSfx ? FindSound(X->File) : nullptr;
+	if (!Sound)
+	{
+		Sfx->Stop();
+		return;
+	}
+	if (Sfx->Sound == Sound && Sfx->IsPlaying())
+		return;
+	Sfx->Stop();
+	Sfx->SetSound(Sound);
+	Sfx->SetVolumeMultiplier(X->Volume * SfxVolume);
+	Sfx->Play();
 }
 
 void AMishiCouple::ResetAutoTimer()
@@ -229,6 +291,7 @@ void AMishiCouple::Tick(float DeltaSeconds)
 		A->Advance(Dt);
 	if (UMishiAnimInstance* A = Player(His))
 		A->Advance(Dt);
+	StepSkin(DeltaSeconds);
 	// the narration: a line every few seconds, in the scene's order, the last one kept
 	LineTimer += DeltaSeconds;
 	if (LineTimer >= SubtitleSeconds && LineIndex < Data.Lines.Num() - 1)

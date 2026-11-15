@@ -18,3 +18,6 @@ Content/
 # local tool output (renders of game assets stay local too)
 _work/
 out/
+
+# Python byte code
+__pycache__/

@@ -1,0 +1,8 @@
+[
+  {"name": "01_p1_game",   "phase": 0, "seconds": 3.0, "yaw": 0,   "y": -1,  "zoom": 1.0},
+  {"name": "02_p1_face",   "phase": -1, "seconds": 1.5, "yaw": 0,  "y": 0.5, "zoom": 0.17, "bone": "Bip001-Head"},
+  {"name": "03_p1_side",   "phase": -1, "seconds": 1.5, "yaw": 90, "y": 0.5, "zoom": 0.8},
+  {"name": "04_p1_wide",   "phase": -1, "seconds": 1.5, "yaw": 30, "y": 0.62, "zoom": 1.8},
+  {"name": "05_p3_front",  "phase": 2, "seconds": 3.0, "yaw": 180, "y": 0.5, "zoom": 0.7},
+  {"name": "06_p3_body",   "phase": -1, "seconds": 1.5, "yaw": 20, "y": 0.5, "zoom": 0.4, "bone": "Bip001-Spine1"}
+]

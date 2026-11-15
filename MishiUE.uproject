@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.6",
+	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "Mishi (蜜室) in Unreal Engine 5: the Rise of Eros eros-mode viewer, ported from the Unity project E:\\code\\othercode\\mishi",
 	"Modules": [

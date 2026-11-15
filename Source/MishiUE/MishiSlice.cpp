@@ -232,6 +232,15 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 	{
 		Voices.Add({Str(O, TEXT("part")), Str(O, TEXT("jp")), Str(O, TEXT("en"))});
 	});
+	Sfx.Reset();
+	Each(Root, TEXT("sfx"), [this](const FObj& O)
+	{
+		FMishiSfx& X = Sfx.AddDefaulted_GetRef();
+		X.Part = Str(O, TEXT("part"));
+		X.File = Str(O, TEXT("file"));
+		X.Volume = Num(O, TEXT("volume"), 1.f);
+		X.bLoop = Bool(O, TEXT("loop"), true);
+	});
 	const FObj Music = Obj(Root, TEXT("music"));
 	MusicFile = Str(Music, TEXT("file"));
 	MusicVolume = Num(Music, TEXT("volume"), 0.35f);

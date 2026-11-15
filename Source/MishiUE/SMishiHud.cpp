@@ -83,10 +83,25 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	];
 	Bar->AddSlot().AutoWidth().Padding(3.f)
 	[
-		// "nan xing: xian shi / yin cang"
+		// "nan xing: pi fu / jian ying / yin cang" - his skin, the game's flat silhouette, hidden
 		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
-				return C && !C->bShowHim ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u663E\u793A"); }),
-			[this]() { if (AMishiCouple* C = Couple()) C->SetShowHim(!C->bShowHim); }, nullptr, 96.f)
+				const int32 St = C ? C->HisStyle : 0;
+				return St == 1 ? MISHI_TEXT("\u7537\u6027\uFF1A\u526A\u5F71") : St == 2 ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u76AE\u80A4"); }),
+			[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 104.f)
+	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		// "yin xiao" - the parts' sound loops
+		Button(MISHI_TEXT("\u97F3\u6548"),
+			[this]() { if (AMishiCouple* C = Couple()) C->SetSfx(!C->bSfx); },
+			[this]() { const AMishiCouple* C = Couple(); return C && C->bSfx; }, 64.f)
+	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		// "chao hong" - sweat and blush following the phase
+		Button(MISHI_TEXT("\u6F6E\u7EA2"),
+			[this]() { if (AMishiCouple* C = Couple()) C->bSkinState = !C->bSkinState; },
+			[this]() { const AMishiCouple* C = Couple(); return C && C->bSkinState; }, 64.f)
 	];
 	// camera presets: "quan jing", "zheng mian", "ce mian", "fu shi", "te xie", "fu wei"
 	struct FPreset { const TCHAR* Label; int32 Kind; };

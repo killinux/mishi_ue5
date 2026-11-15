@@ -35,6 +35,21 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float ZoomPerNotch = 0.1f;
 
+	/** Depth of field: a real lens - full-frame sensor, the focal length the field of view gives, this aperture.  The focus follows
+	 *  her face while it is in the picture, the orbit's target otherwise. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bDepthOfField = true;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float Aperture = 2.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	FName FocusBone = TEXT("Bip001-Head");
+
+	/** Seconds the focus takes to settle on a new distance. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float FocusEase = 0.25f;
+
 	void Setup(AMishiCouple* InCouple);
 	void ResetView();
 	void SetView(float InYaw, float InY, float InZoom);
@@ -42,6 +57,16 @@ public:
 	void Pan(float DxPixels, float DyPixels);
 	void ZoomBy(float Notches);
 	void Keys(float DeltaSeconds, float Yaw, float Height, float Zoom);   // held keys, each -1..1
+
+	/** Orbit round a point of the world (a bone) instead of the rig's own target; ClearTargetWorld goes back. */
+	void SetTargetWorld(const FVector& World) { bTargetOverride = true; TargetOverrideWorld = World; }
+	void ClearTargetWorld() { bTargetOverride = false; }
+	/** Vertical field of view in degrees (<= 0: the game's own). */
+	void SetFovOverride(float VerticalDegrees) { FovOverride = VerticalDegrees; }
+	/** The game's limits on zoom and pan (off for the look-dev shots, which go closer than the game lets the player). */
+	bool bLimits = true;
+	/** Distance from the camera to what it orbits, cm - the focus distance for the depth of field. */
+	float FocusDistance() const { return LastDistance; }
 
 	float GetYaw() const { return Yaw; }
 	float GetY() const { return Y; }
@@ -58,8 +83,14 @@ private:
 	float Yaw = 0.f, Y = 0.5f, Zoom = 1.f;
 	FVector PanU = FVector::ZeroVector;   // Unity, anchor space
 	FVector RightU = FVector(1, 0, 0), UpU = FVector(0, 1, 0);   // the camera's right / up in anchor space (for panning)
+	bool bTargetOverride = false;
+	FVector TargetOverrideWorld = FVector::ZeroVector;
+	float FovOverride = 0.f;
+	float LastDistance = 300.f;
+	float Focus = 300.f;
+	void UpdateLens(float DeltaSeconds, const FVector& Pos, const FRotator& Look, float VerticalFov, double Aspect);
 
 	float ZoomMax() const { return FMath::Max(Rig.ZoomMax, Rig.Zoom * 3.f); }
 	FVector2D Orbit(float At) const;
-	void UpdatePose();
+	void UpdatePose(float DeltaSeconds = 0.f);
 };

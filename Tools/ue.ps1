@@ -6,9 +6,11 @@
 #   powershell -File Tools\ue.ps1 tour   [-Slice eros15_07]      (frames -> out\<slice>_tour.mp4, with the room's music)
 #   powershell -File Tools\ue.ps1 editor
 param(
-    [ValidateSet('find', 'build', 'import', 'play', 'tour', 'editor')] [string]$Do = 'find',
+    [ValidateSet('find', 'build', 'import', 'play', 'tour', 'shots', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
     [switch]$Force,
+    [string]$Shots = '',
+    [string]$Tag = '',
     [int]$ResX = 1600,
     [int]$ResY = 900
 )
@@ -104,6 +106,15 @@ switch ($Do) {
             & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -c:v libx264 -pix_fmt yuv420p -crf 18 $mp4
         }
         Write-Host "tour -> $mp4"
+    }
+    'shots' {
+        # look-dev stills: Tools\shots_lookdev.json (or -Shots <file>) -> Saved\MishiShots\<slice>[_<tag>]\<name>.png
+        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\shots_lookdev.json' }
+        $dir = Join-Path $Root "Saved\MishiShots\$Slice$(if ($Tag) { '_' + $Tag })"
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'shots'
+        Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+        exit $code
     }
     'editor' {
         Start-Process -FilePath $Editor -ArgumentList "`"$Project`""
