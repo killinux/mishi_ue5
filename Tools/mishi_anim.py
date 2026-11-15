@@ -79,6 +79,7 @@ def build(who, src_stem, skeleton, mesh, folder, force=False, warn=None):
     ue_names = [b.replace(" ", "-") for b in bones]
     out = []
     offset = 0
+    mirrored, odd = set(), set()
     V, Q = unreal.Vector, unreal.Quat           # (the scripted SetBoneTrackKeys takes the double types)
     for ci, clip in enumerate(meta["clips"]):
         n = int(clip["frames"])
@@ -110,6 +111,15 @@ def build(who, src_stem, skeleton, mesh, folder, force=False, warn=None):
                 continue
             pos, rot, scl = [], [], []
             base = offset + bi * 10
+            # A bone mirrored through its own origin (scale negative on all three axes: the right shoulder's helper sphere, a
+            # copy of the left one).  The FBX import builds the reference pose WITHOUT the mirror - same rotation, scale
+            # positive - and a mirror through the origin cancels out of the skin matrix (animated x inverse bind) wherever
+            # both carry it.  So the track drops it too; with it the skin of that bone is turned inside out through the joint
+            # (her right shoulder caved in).  A scale negative on one or two axes is a real mirror: left as it is, and said.
+            signs = [data[base + 7 + k] < 0.0 for k in range(3)]
+            flip = -1.0 if all(signs) else 1.0
+            if any(signs):
+                (mirrored if all(signs) else odd).add(bones[bi])
             if parents[bi] < 0:
                 for f in range(n):
                     o = base + f * fpf
@@ -117,13 +127,13 @@ def build(who, src_stem, skeleton, mesh, folder, force=False, warn=None):
                     p, q = top_bone(px, py, pz, qx, qy, qz, qw)
                     pos.append(V(p[0], p[1], p[2]))
                     rot.append(Q(q[0], q[1], q[2], q[3]))
-                    scl.append(V(data[o + 7], data[o + 8], data[o + 9]))
+                    scl.append(V(flip * data[o + 7], flip * data[o + 8], flip * data[o + 9]))
             else:
                 for f in range(n):
                     o = base + f * fpf
                     pos.append(V(-data[o] * 100.0, -data[o + 1] * 100.0, data[o + 2] * 100.0))
                     rot.append(Q(-data[o + 3], -data[o + 4], data[o + 5], data[o + 6]))
-                    scl.append(V(data[o + 7], data[o + 8], data[o + 9]))
+                    scl.append(V(flip * data[o + 7], flip * data[o + 8], flip * data[o + 9]))
             c.add_bone_curve(ue_names[bi], False)
             c.set_bone_track_keys(ue_names[bi], pos, rot, scl, False)
         c.close_bracket(False)
@@ -143,5 +153,9 @@ def build(who, src_stem, skeleton, mesh, folder, force=False, warn=None):
             warn("%s: %d of %d bones are not in the skeleton" % (name, skipped, nb))
     with open(stamp_file, "w") as f:
         f.write(stamp)
+    if mirrored:
+        log("%s: bones mirrored through their origin, written without the mirror (as the reference pose has them): %s" % (who, ", ".join(sorted(mirrored))))
+    if odd:
+        warn("%s: bones with a scale negative on one or two axes (a mirror the reference pose may not have): %s" % (who, ", ".join(sorted(odd))))
     log("%s: %d animations from tracks (%d bones, %d shapes, %d fps)" % (who, len(out), nb, len(shapes), fps))
     return out
