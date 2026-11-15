@@ -24,16 +24,26 @@ bool FMishiAnimProxy::Evaluate(FPoseContext& Output)
 	{
 		FAnimationPoseData Data(Output);
 		A->GetAnimationPose(Data, Extract(Now));
-		return true;
 	}
-	FPoseContext PoseA(Output);
-	FPoseContext PoseB(Output);
-	FAnimationPoseData DataA(PoseA);
-	FAnimationPoseData DataB(PoseB);
-	A->GetAnimationPose(DataA, Extract(Now));
-	B->GetAnimationPose(DataB, Extract(Prev));
-	FAnimationPoseData Out(Output);
-	FAnimationRuntime::BlendTwoPosesTogether(DataA, DataB, Alpha, Out);
+	else
+	{
+		FPoseContext PoseA(Output);
+		FPoseContext PoseB(Output);
+		FAnimationPoseData DataA(PoseA);
+		FAnimationPoseData DataB(PoseB);
+		A->GetAnimationPose(DataA, Extract(Now));
+		B->GetAnimationPose(DataB, Extract(Prev));
+		FAnimationPoseData Out(Output);
+		FAnimationRuntime::BlendTwoPosesTogether(DataA, DataB, Alpha, Out);
+	}
+	// the clips' pose is what the bone cloth hangs on and is pulled to
+	if (Springs.IsConfigured())
+	{
+		if (bSpringsOn)
+			Springs.Apply(Output.Pose, GetRequiredBones(), GetComponentTransform(), GetActorTransform(), GetDeltaSeconds(), FloorZ);
+		else
+			Springs.Reset();
+	}
 	return true;
 }
 
@@ -54,6 +64,18 @@ void UMishiAnimInstance::PreUpdateAnimation(float DeltaSeconds)
 	Proxy.Now = Now;
 	Proxy.Prev = Prev;
 	Proxy.Alpha = Alpha;
+	if (bSpringsDirty)
+	{
+		Proxy.Springs.Configure(SpringSetup);
+		bSpringsDirty = false;
+	}
+	if (bSpringsReset)
+	{
+		Proxy.Springs.Reset();
+		bSpringsReset = false;
+	}
+	Proxy.bSpringsOn = bSpringsOn;
+	Proxy.FloorZ = FloorZ;
 }
 
 void UMishiAnimInstance::Play(UAnimSequence* Seq, bool bLoop, float BlendSeconds)

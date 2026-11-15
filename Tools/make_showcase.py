@@ -20,6 +20,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,6 +42,111 @@ ACTIONS = [
 SHEET_ACTION = {"skill_01": "skill1", "skill_02": "skill2", "skill_03": "skill3", "hurt": "hurt", "die": "die"}
 # the auto mode's round: the buttons by trigger
 AUTO = ["show", "react1", "show", "react2", "stance", "skill1", "stance", "skill2", "stance", "skill3", "stance", "hurt", "stance"]
+
+
+# ---------------------------------------------------------------------------------------------------------------- bone cloth
+# Hair, chains and skirt panels swing over the clips (Source/MishiUE/MishiSprings.h; the numbers are the presets of the Unity
+# project's RoeBoneCloth, Magica Cloth 2's per 1/90 s).  A kind is told by the bone's name, first match wins.  What a08's
+# clips do with these bones (anim_bone_motion): the skirt's chains, the sword's chain, the braid, the earring and the wrist's
+# links are still in every clip; the skirt panels and her front locks are keyed in the skills (40-110 degrees) and still in
+# the stances - there the keys stay what the cloth is pulled to.
+SPRING_KINDS = [
+    ("swag", re.compile(r"skirt_chain", re.I)),            # a chain hung between two points of the belt: both ends fastened
+    ("chain", re.compile(r"^chain\d|dec_wrist|^tassel_|^accessories|^bone02[89]$", re.I)),
+    ("skirt", re.compile(r"skirt", re.I)),
+    ("hair", re.compile(r"hair|braid|bangs|hari", re.I)),
+]
+SPRING_SKIP = re.compile(r"chain_arm|breast", re.I)     # (the arm's chains are keyed and sit on one another: no length to swing)
+SPRING_PRESETS = {
+    # (the Unity presets pull hair and skirt back by 0.3 / 0.35 a step: under them a wind as strong as gravity moved a skirt
+    # tip three centimetres.  Here both are looser, so the roof's wind shows; the keys of a skill are still what they follow.)
+    "hair": {"gravity": 5.0, "damping": 0.05, "radius": 0.015, "restore": 0.18, "attenuation": 0.8, "limit_root": 15.0, "limit_tip": 50.0,
+             "inertia": 0.3, "move_limit": 2.0, "world_inertia": 0.3, "world_move_limit": 2.0, "particle_limit": 3.0, "floor": False,
+             "wind": 0.8, "colliders": ["head", "neck", "torso"]},
+    "chain": {"gravity": 5.0, "damping": 0.05, "radius": 0.012, "restore": 0.12, "attenuation": 0.8, "limit_root": 30.0, "limit_tip": 80.0,
+              "inertia": 0.5, "move_limit": 3.0, "world_inertia": 0.5, "world_move_limit": 3.0, "particle_limit": 4.0, "floor": True,
+              "wind": 0.4, "colliders": ["hips", "thigh_l", "thigh_r", "calf_l", "calf_r", "head", "neck"]},
+    "swag": {"gravity": 5.0, "damping": 0.08, "radius": 0.012, "restore": 0.12, "attenuation": 0.8, "limit_root": 30.0, "limit_tip": 80.0,
+             "inertia": 0.5, "move_limit": 3.0, "world_inertia": 0.5, "world_move_limit": 3.0, "particle_limit": 4.0, "floor": False,
+             "pin_tip": True, "wind": 0.5, "colliders": ["hips", "thigh_l", "thigh_r"]},
+    "skirt": {"gravity": 5.0, "damping": 0.15, "radius": 0.02, "restore": 0.2, "attenuation": 0.8, "limit_root": 5.0, "limit_tip": 35.0,
+              "inertia": 0.3, "move_limit": 3.0, "depth_inertia": 0.3, "world_inertia": 0.15, "world_move_limit": 1.0,
+              "world_turn_limit": 120.0, "max_distance_root": 0.03, "max_distance_tip": 0.25, "particle_limit": 4.0, "floor": True,
+              "wind": 1.0, "colliders": ["hips", "thigh_l", "thigh_r", "calf_l", "calf_r"]},
+}
+# the body the cloth lies against: capsules between two bones (radii in metres; a little inside the skin, so cloth that rests
+# on it in the animated pose is not pushed off); offsets are cm in the bone's own axes as Unreal has them (+X up the head)
+SPRING_COLLIDERS = [
+    {"name": "hips", "a": "Bip001 Pelvis", "ra": 0.105},
+    {"name": "thigh_l", "a": "Bip001 L Thigh", "b": "Bip001 L Calf", "ra": 0.08, "rb": 0.055},
+    {"name": "thigh_r", "a": "Bip001 R Thigh", "b": "Bip001 R Calf", "ra": 0.08, "rb": 0.055},
+    {"name": "calf_l", "a": "Bip001 L Calf", "b": "Bip001 L Foot", "ra": 0.055, "rb": 0.038},
+    {"name": "calf_r", "a": "Bip001 R Calf", "b": "Bip001 R Foot", "ra": 0.055, "rb": 0.038},
+    {"name": "torso", "a": "Bip001 Spine", "b": "Bip001 Spine2", "ra": 0.095, "rb": 0.105},
+    {"name": "neck", "a": "Bip001 Neck", "b": "Bip001 Head", "ra": 0.042, "rb": 0.045},
+    {"name": "head", "a": "Bip001 Head", "ra": 0.088, "offset_a": [8.0, -1.0, 0.0]},
+]
+# the wind over the castle's roof: where it blows to in her own space (x her right, z ahead), m/s2 on cloth of wind 1, the share
+# of it that comes and goes, the seconds of its slowest gust
+WIND = {"direction": [-0.85, 0.0, -0.5], "strength": 6.0, "gust": 0.75, "period": 3.4}
+
+
+def springs(d):
+    """The sets of bones the cloth solver takes, by kind, from the rig's own bone names (female_anim.json)."""
+    path = os.path.join(d, "female_anim.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        bones = json.load(f)["bones"]
+    sets = []
+    for kind, _ in SPRING_KINDS:
+        names = []
+        for b in bones:
+            if SPRING_SKIP.search(b) or b.startswith("Bip001"):
+                continue
+            if next((k for k, rx in SPRING_KINDS if rx.search(b)), None) == kind:
+                names.append(b)
+        if names:
+            sets.append(dict(SPRING_PRESETS[kind], kind=kind, bones=names))
+    if not sets:
+        return None
+    return {"wind": WIND, "colliders": SPRING_COLLIDERS, "sets": sets}
+
+
+# ---------------------------------------------------------------------------------------------------------------- effects
+def safe_name(name):
+    return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)
+
+
+def effects(d):
+    """The skills' baked effects (Unity's ExportEffects wrote <slice>/fx): fx_index.json, what the game module reads - per
+    action its file and batches, each with its material's asset name and which vertex layout its shader reads."""
+    fx = os.path.join(d, "fx")
+    if not os.path.isfile(os.path.join(fx, "fx.json")):
+        return None
+    with open(os.path.join(fx, "fx.json"), encoding="utf-8") as f:
+        index = json.load(f)
+    with open(os.path.join(fx, index.get("materials", "fx_materials.json")), encoding="utf-8") as f:
+        mats = json.load(f)
+    actions = []
+    for a in index["actions"]:
+        batches = []
+        for b in a["batches"]:
+            if b["frames"] <= 0:
+                continue
+            m = mats.get(b["material"], {})
+            batches.append({"id": b["id"], "kind": b["kind"], "chunk": b["chunk"], "max_verts": b["max_verts"], "max_indices": b["max_indices"],
+                            "max_elems": b["max_elems"], "uv1": b["uv1"], "uv2": b["uv2"],
+                            # the newest shader reads custom data from TEXCOORD1 / 2, the older ones from TEXCOORD0.zw / 1.xy
+                            "layout": 1 if (m.get("shader") or "").endswith("UnlitMaster") else 0,
+                            "material": "MI_fx_" + safe_name(b["material"]),
+                            "order": [m.get("queue", b.get("queue", 3000)), b.get("sorting_order", 0), b["id"]]})
+        batches.sort(key=lambda b: b["order"])
+        actions.append({"name": a["name"], "part": a["part"], "file": a["file"], "frames": a["frames"], "fps": index["fps"],
+                        "duration": a["duration"], "max_lights": a.get("max_lights", 0), "batches": batches})
+    with open(os.path.join(fx, "fx_index.json"), "w", encoding="utf-8") as f:
+        json.dump({"fps": index["fps"], "target": index.get("target"), "actions": actions}, f, indent=1)
+    return {"actions": {a["part"]: a["name"] for a in actions}, "target": index.get("target")}
 
 
 # The game's timeline of the super has no camera of its own (the battle's far side view stays).  Its finish is made to be seen
@@ -163,6 +269,12 @@ def main():
             cues.setdefault(part, []).insert(0, {"time": 0.15, "kind": "voice", "jp": voice, "en": voice, "volume": 1.0})
     index_of = {p["trigger"]: i for i, p in enumerate(phases)}
     auto = [index_of[t] for t in AUTO if t in index_of]
+    # the skills' effects, baked: a part that has them starts their playback with itself
+    fx = effects(d)
+    if fx:
+        for part, action in fx["actions"].items():
+            if part in seen:
+                cues.setdefault(part, []).insert(0, {"time": 0.0, "kind": "fx", "action": action})
 
     # where she stands: the first slot of the player's formation (the stage's ArenaCenter when there is none), facing the enemy
     places = show.get("anchors", [])
@@ -203,6 +315,8 @@ def main():
         "materials": show.get("materials"),
         "anchor": {"position": pos, "rotation": rot, "name": stand.get("name")},
         "target": target,
+        "springs": springs(d),
+        "effects": ("Import/%s/fx" % os.path.basename(os.path.normpath(d))) if fx else None,
         "posture_anchor": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1]},
         # an orbit round her chest: level at 3.3 m, from above at 1.6 m out and 1.9 m up, from near the ground at 2.9 m; she faces
         # the anchor's +Z and the orbit starts behind her, so the view starts half a turn round, a little to her right
@@ -224,6 +338,13 @@ def main():
         json.dump(out, f, ensure_ascii=False, indent=1)
     print("slice.json: %d buttons, %d parts, cues for %s, auto %s, stands at %s (%s), sun %s" % (
         len(phases), len(parts), {k: len(v) for k, v in cues.items()}, auto, pos, stand.get("name"), sun_note))
+    if out["springs"]:
+        print("bone cloth: " + ", ".join("%s %d bones" % (s["kind"], len(s["bones"])) for s in out["springs"]["sets"]))
+    if fx:
+        print("effects: %s" % fx["actions"])
+        if fx.get("target") is not None and abs(fx["target"] - target[2]) > 0.01:
+            print("WARNING: the effects were baked for a target %.2f m ahead, the slice's stands %.2f m ahead (bake again with -mishiTarget)" % (
+                fx["target"], target[2]))
 
 
 if __name__ == "__main__":

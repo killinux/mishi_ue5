@@ -82,6 +82,9 @@ void AMishiPlayerController::StartShots(const FString& File)
 		O->TryGetBoolField(TEXT("hud"), S.bHud);
 		O->TryGetBoolField(TEXT("hide_him"), S.bHideHim);
 		O->TryGetBoolField(TEXT("skill_cam"), S.bSkillCam);
+		bool bFlag = false;
+		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
+		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
 		const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
 		if (O->TryGetArrayField(TEXT("offset"), Off) && Off && Off->Num() >= 3)
 			S.BoneOffset = FVector((*Off)[0]->AsNumber(), (*Off)[1]->AsNumber(), (*Off)[2]->AsNumber());
@@ -187,6 +190,10 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 		UE_LOG(LogMishi, Log, TEXT("shot %d %s"), ShotIndex, *S.Name);       // the log's time stamps tell how long each one took
 		ShotFrames.Add(RecordFrame);
 		Cam->bSkillCamera = S.bSkillCam;
+		if (S.Springs >= 0)
+			C->bSprings = S.Springs > 0;
+		if (S.Fx >= 0)
+			C->bFx = S.Fx > 0;
 		if (S.Phase >= 0)
 			C->GoPhase(S.Phase);
 		if (S.At >= 0.f)

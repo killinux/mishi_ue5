@@ -3,7 +3,7 @@
     python Tools/ue_remote.py Tools/import_slice.py eros15_07 [steps] [--force]      in the open editor (the fast loop)
     powershell -File Tools\\ue.ps1 import [-Slice eros15_07] [-Force]                  starts an editor for it, quits after
 
-steps (default: all) - any of: textures audio bodies room materials level
+steps (default: all) - any of: textures audio bodies room materials effects level
   textures   the room's textures (Import/<slice>/textures) and the characters' own from the game's material cache
              (ripper_tpose's hq_material_data.py: <cache>/<id>.json + textures/) - normal maps flipped to Unreal's green, masks linear
   audio      voices, the parts' sound loops, the room's music: OGG -> WAV (ffmpeg) -> SoundWave; music and loops loop
@@ -11,6 +11,8 @@ steps (default: all) - any of: textures audio bodies room materials level
   room       room_meshes.fbx -> a static mesh per distinct mesh (RM_*); room.fbx whole, for the space check
   materials  the masters (mishi_materials.py) + an instance per material: the characters' from the game's own data, the room's
              from materials.json
+  effects    a showcase slice's baked skill effects (Import/<slice>/fx, Unity's ExportEffects): their textures and a material
+             instance per game material (mishi_fx.py); the geometry itself is read by the game at run time
   level      /Game/Mishi/Maps/<slice>: the room's placements, lights, sky, fog, post-process volume, the couple
 Writes Import/<slice>/ue_import_report.json.
 """
@@ -33,16 +35,18 @@ TOOLS = os.path.join(PROJECT, "Tools")
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 import mishi_anim  # noqa: E402
+import mishi_fx  # noqa: E402
 import mishi_look  # noqa: E402
 import mishi_materials  # noqa: E402
 
 importlib.reload(mishi_anim)
 importlib.reload(mishi_materials)
+importlib.reload(mishi_fx)
 importlib.reload(mishi_look)
 
 FFMPEG = r"D:\Program Files\ffmpeg\bin\ffmpeg.exe"
 HQ_CACHE = os.environ.get("ROE_HQ_CACHE", r"E:\game_export\RiseOfEros\_meta\_hq_materials")
-ALL_STEPS = ("textures", "audio", "bodies", "room", "materials", "level")
+ALL_STEPS = ("textures", "audio", "bodies", "room", "materials", "effects", "level")
 
 asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 eal = unreal.EditorAssetLibrary
@@ -599,9 +603,17 @@ def main():
         if room_missing:
             warn("room slots without a material: %s" % sorted(room_missing)[:10])
 
+    # the skills' effects: their materials (the level hands them to the couple)
+    fx_materials = []
+    if "effects" in STEPS:
+        fx_materials = mishi_fx.step(SRC, DST, default_textures(), import_textures, warn, force=FORCE and len(STEPS) == 1)
+        report["steps"]["effects"] = {"materials": len(fx_materials)}
+    elif "level" in STEPS:
+        fx_materials = mishi_fx.load(DST)
+
     if "level" in STEPS:
         info = mishi_look.build_level(MAP, SLICE, slice_text, slice_data, placements, meshes, instances, masters, her, her_anims, him, his_anims,
-                                      sounds, check_mesh, warn, SRC)
+                                      sounds, check_mesh, warn, SRC, fx_materials)
         report["steps"]["level"] = info
     eal.save_directory("/Game/Mishi", only_if_is_dirty=True, recursive=True)
     report["seconds"] = round(time.time() - t0, 1)

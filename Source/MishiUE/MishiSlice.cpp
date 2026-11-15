@@ -175,7 +175,9 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 				const FObj O = V->AsObject();
 				FMishiCue& C = List.AddDefaulted_GetRef();
 				const FString K = Str(O, TEXT("kind"));
-				C.Kind = K == TEXT("sfx") ? 0 : K == TEXT("voice") ? 1 : K == TEXT("shake") ? 2 : K == TEXT("move") ? 4 : K == TEXT("camera") ? 5 : 3;
+				C.Kind = K == TEXT("sfx") ? 0 : K == TEXT("voice") ? 1 : K == TEXT("shake") ? 2 : K == TEXT("move") ? 4 : K == TEXT("camera") ? 5
+					: K == TEXT("fx") ? 6 : 3;
+				C.Action = Str(O, TEXT("action"));
 				C.Move = Str(O, TEXT("move"));
 				C.Radius = Num(O, TEXT("radius"), 1.f);
 				C.Fov = Num(O, TEXT("fov"), 40.f);
@@ -193,6 +195,67 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 			List.StableSort([](const FMishiCue& A, const FMishiCue& B) { return A.Time < B.Time; });
 		}
 	Target = Vec(Root, TEXT("target"), FVector(0.0, 0.0, 6.0));
+	Effects = Str(Root, TEXT("effects"));
+	// the bone cloth: the sets of bones by kind with their numbers, the body's capsules, the wind
+	Springs = FMishiSpringSetup();
+	if (const FObj Sp = Obj(Root, TEXT("springs")))
+	{
+		auto Bone = [](const FString& Name) { return Name.IsEmpty() ? FName() : FName(*Name.Replace(TEXT(" "), TEXT("-"))); };
+		const FObj Wind = Obj(Sp, TEXT("wind"));
+		Springs.WindDirection = MishiSpace::Direction(Vec(Wind, TEXT("direction")));
+		Springs.WindStrength = Num(Wind, TEXT("strength"));
+		Springs.WindGust = Num(Wind, TEXT("gust"), 0.5f);
+		Springs.WindPeriod = Num(Wind, TEXT("period"), 3.f);
+		Each(Sp, TEXT("colliders"), [this, &Bone](const FObj& O)
+		{
+			FMishiSpringCollider& C = Springs.Colliders.AddDefaulted_GetRef();
+			C.Name = Str(O, TEXT("name"));
+			C.A = Bone(Str(O, TEXT("a")));
+			C.B = Bone(Str(O, TEXT("b")));
+			C.RA = Num(O, TEXT("ra"), 0.05f) * 100.f;
+			C.RB = Num(O, TEXT("rb"), Num(O, TEXT("ra"), 0.05f)) * 100.f;
+			C.OffsetA = Vec(O, TEXT("offset_a"));              // cm, in the bone's own (Unreal) axes
+			C.OffsetB = Vec(O, TEXT("offset_b"));
+		});
+		Each(Sp, TEXT("sets"), [this, &Bone](const FObj& O)
+		{
+			FMishiSpringSet& Set = Springs.Sets.AddDefaulted_GetRef();
+			Set.Kind = Str(O, TEXT("kind"));
+			if (const FArr* A = Arr(O, TEXT("bones")))
+				for (const TSharedPtr<FJsonValue>& V : *A)
+					if (V.IsValid())
+						Set.Bones.Add(Bone(V->AsString()));
+			if (const FArr* A = Arr(O, TEXT("colliders")))
+				for (const TSharedPtr<FJsonValue>& V : *A)
+					if (V.IsValid())
+						Set.Colliders.Add(V->AsString());
+			FMishiSpringSettings& S = Set.S;
+			S.Gravity = Num(O, TEXT("gravity"), S.Gravity);
+			S.Damping = Num(O, TEXT("damping"), S.Damping);
+			S.Radius = Num(O, TEXT("radius"), S.Radius);
+			S.Restore = Num(O, TEXT("restore"), S.Restore);
+			S.Attenuation = Num(O, TEXT("attenuation"), S.Attenuation);
+			S.LimitRoot = Num(O, TEXT("limit_root"), S.LimitRoot);
+			S.LimitTip = Num(O, TEXT("limit_tip"), S.LimitTip);
+			S.Inertia = Num(O, TEXT("inertia"), S.Inertia);
+			S.MoveLimit = Num(O, TEXT("move_limit"), S.MoveLimit);
+			S.TurnLimit = Num(O, TEXT("turn_limit"), S.TurnLimit);
+			S.DepthInertia = Num(O, TEXT("depth_inertia"), S.DepthInertia);
+			S.WorldInertia = Num(O, TEXT("world_inertia"), S.WorldInertia);
+			S.WorldMoveLimit = Num(O, TEXT("world_move_limit"), S.WorldMoveLimit);
+			S.WorldTurnLimit = Num(O, TEXT("world_turn_limit"), S.WorldTurnLimit);
+			S.ParticleLimit = Num(O, TEXT("particle_limit"), S.ParticleLimit);
+			S.MaxDistanceRoot = Num(O, TEXT("max_distance_root"), S.MaxDistanceRoot);
+			S.MaxDistanceTip = Num(O, TEXT("max_distance_tip"), S.MaxDistanceTip);
+			S.PushAttenuation = Num(O, TEXT("push_attenuation"), S.PushAttenuation);
+			S.Friction = Num(O, TEXT("friction"), S.Friction);
+			S.Wind = Num(O, TEXT("wind"), S.Wind);
+			S.Stabilize = Num(O, TEXT("stabilize"), S.Stabilize);
+			S.bFloor = Bool(O, TEXT("floor"), S.bFloor);
+			S.bPinTip = Bool(O, TEXT("pin_tip"), S.bPinTip);
+			S.Iterations = int32(Num(O, TEXT("iterations"), float(S.Iterations)));
+		});
+	}
 	Anchor = Xform(Obj(Root, TEXT("anchor")));
 	PostureAnchor = Xform(Obj(Root, TEXT("posture_anchor")));
 

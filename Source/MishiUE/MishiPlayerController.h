@@ -75,6 +75,7 @@ private:
 		bool bHud = false;
 		bool bHideHim = false;
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
+		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
 	};
 	struct FSoundMark
 	{

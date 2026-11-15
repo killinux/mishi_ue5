@@ -7,7 +7,7 @@ public class MishiUE : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
-			"Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "Json", "JsonUtilities", "AnimGraphRuntime"
+			"Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "Json", "JsonUtilities", "AnimGraphRuntime", "ProceduralMeshComponent"
 		});
 	}
 }

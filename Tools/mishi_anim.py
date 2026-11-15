@@ -56,7 +56,11 @@ def build(who, src_stem, skeleton, mesh, folder, force=False, warn=None):
     stamp_file = os.path.join(os.path.dirname(src_stem), "_ue_" + os.path.basename(src_stem) + ".stamp")
     names = ["%s_%s" % (who, c["name"]) for c in meta["clips"]]
     have_all = all(eal.does_asset_exist("%s/%s" % (folder, n)) for n in names)
-    if have_all and not force and os.path.isfile(stamp_file) and open(stamp_file).read() == stamp:
+    have = ""
+    if os.path.isfile(stamp_file):
+        with open(stamp_file) as f:
+            have = f.read()
+    if have_all and not force and have == stamp:
         return [unreal.load_asset("%s/%s.%s" % (folder, n, n)) for n in names]
 
     data = array.array("f")

@@ -2,8 +2,11 @@
 #include "MishiUE.h"
 #include "MishiAnimInstance.h"
 #include "Animation/AnimSequence.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/AudioComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMaterialLibrary.h"
@@ -48,6 +51,35 @@ AMishiCouple::AMishiCouple()
 	Sfx = CreateDefaultSubobject<UAudioComponent>(TEXT("Sfx"));
 	Sfx->SetupAttachment(Origin);
 	Sfx->bAutoActivate = false;
+	// the skills' effects: a mesh rebuilt every frame from the bake (its vertices are the world's: it does not go with the
+	// actor), and the lights their particles carry
+	FxMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FxMesh"));
+	FxMesh->SetupAttachment(Origin);
+	FxMesh->SetUsingAbsoluteLocation(true);
+	FxMesh->SetUsingAbsoluteRotation(true);
+	FxMesh->SetUsingAbsoluteScale(true);
+	FxMesh->SetCastShadow(false);
+	FxMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FxMesh->bUseAsyncCooking = false;
+	FxMesh->bAffectDynamicIndirectLighting = false;
+	FxMesh->SetVisibleInRayTracing(false);
+	for (int32 I = 0; I < 3; ++I)
+	{
+		UPointLightComponent* L = CreateDefaultSubobject<UPointLightComponent>(FName(*FString::Printf(TEXT("FxLight%d"), I)));
+		L->SetupAttachment(Origin);
+		L->SetUsingAbsoluteLocation(true);
+		L->SetMobility(EComponentMobility::Movable);
+		L->SetVisibility(false);
+		L->CastShadows = false;
+		L->IntensityUnits = ELightUnits::Candelas;
+		L->Intensity = 0.f;
+		L->AttenuationRadius = 600.f;
+		L->SourceRadius = 8.f;
+		L->SoftSourceRadius = 20.f;
+		L->LightingChannels.bChannel0 = true;       // the stage and her alike
+		L->LightingChannels.bChannel1 = true;
+		FxLights.Add(L);
+	}
 }
 
 bool AMishiCouple::LoadSlice()
@@ -129,6 +161,18 @@ void AMishiCouple::BeginPlay()
 	His->AddTickPrerequisiteActor(this);
 	if (!Player(Her) || (HisMesh && Data.bMale && !Player(His)))
 		UE_LOG(LogMishi, Error, TEXT("%s: the bodies have no MishiAnimInstance"), *GetName());
+	// her bone cloth (hair, chains, skirt over the clips) and the skills' baked effects, where the slice has them
+	if (UMishiAnimInstance* A = Player(Her))
+	{
+		A->SetSprings(Data.Springs);
+		A->FloorZ = float(GetActorLocation().Z);
+		A->bSpringsOn = bSprings;
+	}
+	if (!Data.Effects.IsEmpty())
+	{
+		Fx.LightScale = FxLightScale;
+		Fx.Load(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Data.Effects));
+	}
 	if (USoundBase* Bgm = FindSound(Data.MusicFile))
 	{
 		Music->SetSound(Bgm);
@@ -240,6 +284,8 @@ void AMishiCouple::Seek(float Seconds)
 		A->Advance(PartTime);
 	ApplyShapes();
 	SkipCues();
+	if (UMishiAnimInstance* A = Player(Her))
+		A->ResetSprings();                      // the cloth starts again from this pose
 }
 
 FVector AMishiCouple::MoveGoal(const FMishiCue& C) const
@@ -292,6 +338,8 @@ void AMishiCouple::SkipCues()
 		}
 		else if (C.Kind == 5 && PartTime < C.Time + C.Duration)
 			OnCamera.Broadcast(C.Time + C.Duration - PartTime, C.Fov, C.Pos, C.Rot);
+		else if (C.Kind == 6 && bFx)
+			Fx.Play(C.Action, PartTime - C.Time, FxMesh, FxMaterials);
 	}
 }
 
@@ -410,6 +458,9 @@ void AMishiCouple::Tick(float DeltaSeconds)
 	}
 	FireCues();
 	StepMove(Dt);
+	StepFx(DeltaSeconds);
+	if (UMishiAnimInstance* A = Player(Her))
+		A->bSpringsOn = bSprings;
 	ApplyShapes();
 	if (!P->bLoop && !P->Next.IsEmpty() && PartTime >= Length * P->ExitTime)
 	{
@@ -473,5 +524,30 @@ void AMishiCouple::FireCues()
 			StartMove(MoveGoal(C), C.Duration);       // the unit's own way across the stage
 		else if (C.Kind == 5)
 			OnCamera.Broadcast(C.Duration, C.Fov, C.Pos, C.Rot);
+		else if (C.Kind == 6 && bFx)
+			Fx.Play(C.Action, PartTime - C.Time, FxMesh, FxMaterials);      // they run on by themselves, past the part's end
 	}
+}
+
+void AMishiCouple::StepFx(float DeltaSeconds)
+{
+	if (!Fx.IsPlaying())
+		return;
+	TArray<UPointLightComponent*> LightList;
+	for (const TObjectPtr<UPointLightComponent>& L : FxLights)
+		LightList.Add(L);
+	if (!bFx)
+	{
+		Fx.Stop(FxMesh, LightList);
+		return;
+	}
+	// what faces the camera is turned to where it stood last frame (this actor ticks before it)
+	FVector CamPos = GetActorLocation() - GetActorForwardVector() * 300.0;
+	FRotator CamRot = GetActorRotation();
+	if (const APlayerCameraManager* CM = UGameplayStatics::GetPlayerCameraManager(this, 0))
+	{
+		CamPos = CM->GetCameraLocation();
+		CamRot = CM->GetCameraRotation();
+	}
+	Fx.Step(DeltaSeconds, FxMesh, LightList, Home(), CamPos, CamRot);
 }

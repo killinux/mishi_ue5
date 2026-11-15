@@ -4,8 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "MishiFx.h"
 #include "MishiSlice.h"
 #include "MishiCouple.generated.h"
+
+class UPointLightComponent;
 
 class UAnimSequence;
 class UAudioComponent;
@@ -100,6 +103,30 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float CameraFillAngle = 24.f;
 
+	/** The skills' effects (a showcase): the instances of the game's effect materials, MI_fx_<name> (the import fills this). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	TArray<TObjectPtr<UMaterialInterface>> FxMaterials;
+
+	/** The mesh the baked effects are drawn into, frame by frame (world space: it stays unturned at the world's origin). */
+	UPROPERTY(VisibleAnywhere, Category = "Mishi")
+	TObjectPtr<UProceduralMeshComponent> FxMesh;
+
+	/** The lights the effects' particles carry (a blow lights the armour). */
+	UPROPERTY(VisibleAnywhere, Category = "Mishi")
+	TArray<TObjectPtr<UPointLightComponent>> FxLights;
+
+	/** Candela of a particle light of intensity 1. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float FxLightScale = 3.f;
+
+	/** The skills' effects are played. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bFx = true;
+
+	/** Hair, chains and skirt swing (the bone cloth over the clips). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSprings = true;
+
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TObjectPtr<USceneComponent> Origin;
 
@@ -135,6 +162,8 @@ public:
 
 	const FMishiSlice& Slice() const { return Data; }
 	bool IsReady() const { return bReady; }
+	bool HasFx() const { return Fx.NumActions() > 0; }
+	bool HasSprings() const { return !Data.Springs.IsEmpty(); }
 	int32 CurrentPhase() const { return PhaseNow; }
 	FString CurrentPart() const;
 	FString CurrentLine() const;
@@ -177,6 +206,7 @@ private:
 	FString SfxFile;                      // the part loop that plays now
 	int32 CueIndex = 0;                   // the part's next cue
 	int32 AutoIndex = -1;                 // where the auto mode is in the slice's round
+	FMishiFx Fx;                          // the skills' baked effects
 	FTransform HomeXform;
 	bool bHome = false;
 	bool bMoving = false;                 // the unit is on its way (a timeline's move)
@@ -185,6 +215,7 @@ private:
 	FVector MoveGoal(const FMishiCue& C) const;
 	void StartMove(const FVector& To, float Seconds);
 	void StepMove(float DeltaSeconds);
+	void StepFx(float DeltaSeconds);
 	void SkipCues();
 	void FireCues();
 	float SfxVolumeNow = 0.f;

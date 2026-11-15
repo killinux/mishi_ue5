@@ -146,6 +146,28 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCameraPawn* P = Cam(); return P && P->bSkillCamera; }, 128.f)
 		]
 	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		SNew(SBox).Visibility(TAttribute<EVisibility>::CreateLambda([this]()
+			{ const AMishiCouple* C = Couple(); return C && C->IsReady() && C->HasSprings() ? EVisibility::Visible : EVisibility::Collapsed; }))
+		[
+			// "wu li" - hair, chains and skirt swing over the clips
+			Button(MISHI_TEXT("物理"),
+				[this]() { if (AMishiCouple* C = Couple()) C->bSprings = !C->bSprings; },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->bSprings; }, 64.f)
+		]
+	];
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		SNew(SBox).Visibility(TAttribute<EVisibility>::CreateLambda([this]()
+			{ const AMishiCouple* C = Couple(); return C && C->IsReady() && C->HasFx() ? EVisibility::Visible : EVisibility::Collapsed; }))
+		[
+			// "te xiao" - the skills' effects
+			Button(MISHI_TEXT("特效"),
+				[this]() { if (AMishiCouple* C = Couple()) C->bFx = !C->bFx; },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->bFx; }, 64.f)
+		]
+	];
 	// camera presets: "quan jing", "zheng mian", "ce mian", "fu shi", "te xie", "fu wei"
 	struct FPreset { const TCHAR* Label; int32 Kind; };
 	const FPreset Presets[] = {

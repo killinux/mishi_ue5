@@ -80,8 +80,10 @@ if ($text -notmatch [regex]::Escape($want)) {
 }
 
 # for shots and the tour: every ray tracing hit shader is there before the first frame (built in the background, the missing ones
-# are a black stand-in material - black reflections, a black path-traced picture), and the picture is rendered at its full size
-$Capture = '-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0,r.ScreenPercentage=100'
+# are a black stand-in material - black reflections, a black path-traced picture), the picture is rendered at its full size,
+# and a mesh is drawn from the frame it appears in (the engine otherwise holds it back until its pipeline states are compiled:
+# a shot that jumps into the middle of a skill had none of the skill's effects in it)
+$Capture = '-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0,r.ScreenPercentage=100,r.PSOPrecache.ProxyCreationStrategy=0,r.AsyncPipelineCompile=0'
 
 function Invoke-Editor([string]$arguments, [string]$label) {
     Write-Host "$label ..."

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "MishiSprings.h"
 
 /** A Unity-space transform (metres, left-handed, Y up). */
 struct FMishiUnityXform
@@ -47,10 +48,10 @@ struct FMishiPhase
 struct FMishiCue
 {
 	float Time = 0.f;
-	// 0 a sound, 1 a voice line, 2 a camera shake, 3 anything else (hits: for effects to come), 4 the unit moves (the dash to
-	// the one it attacks, the way back), 5 the game's own camera for a while
+	// 0 a sound, 1 a voice line, 2 a camera shake, 3 anything else (hits), 4 the unit moves (the dash to the one it attacks,
+	// the way back), 5 the game's own camera for a while, 6 the skill's baked effects start (Action: which bake)
 	int32 Kind = 3;
-	FString File, Jp, En;
+	FString File, Jp, En, Action;
 	FString Move;                         // kind 4: "attack" (to Radius metres in front of the target) or "return"
 	float Volume = 1.f, Duration = 0.5f, Amplitude = 0.5f, Frequency = 0.f, Radius = 1.f, Fov = 40.f;
 	FVector Pos = FVector::ZeroVector;    // kind 5: where the camera stands, in the unit's space (Unity)
@@ -103,6 +104,8 @@ struct FMishiSlice
 	TArray<int32> Auto;                   // the auto mode's round of phases (empty: phase after phase, as the eros mode goes)
 	TMap<FString, TArray<FMishiCue>> Cues;   // by part
 	FVector Target = FVector(0.0, 0.0, 6.0);   // a showcase: where the one she fights stands, in the anchor's space (Unity)
+	FMishiSpringSetup Springs;            // her bone cloth: hair, chains, skirt ("springs"; empty: none)
+	FString Effects;                      // the folder of the skills' baked effects, relative to the project ("effects"; empty: none)
 	FString Posture, Title, Outfit, Scene, Room;
 	FString FemaleRoot, MaleRoot;
 	FMishiUnityXform Anchor;              // the couple's origin in the room

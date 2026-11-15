@@ -85,6 +85,9 @@ LOOK_SHOWCASE = {
     "fog_cutoff": 300000.0,             # cm: the haze is the stage's, the sky dome (10 km out) shows its picture
     "vignette": 0.3,
     "motion_blur": 0.35,                # a sword swung through a quarter turn in two frames of a 30 fps film
+    # the lights the skills' particles carry: candela for a Unity point light of intensity 1 (at 3 a blow lit her five times
+    # as bright as the sun)
+    "fx_light_scale": 0.8,
     # polished metal: reflections are traced up to this roughness (Lumen's default 0.4 hands rougher gold to the blurred
     # probes: the armour's gloss map runs 0.3 .. 0.7)
     "lumen_max_roughness_to_trace": 0.65,
@@ -513,7 +516,7 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn, sou
     ppv.set_editor_property("settings", s)
 
 
-def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn):
+def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn, fx_materials=None):
     anchor = slice_data["anchor"]
     a = spawn(eas, unreal.MishiCouple, ue_pos(anchor["position"]), ue_quat(anchor["rotation"]).rotator(),
               "Couple_" + slice_data.get("posture", slice_name), "Mishi")
@@ -528,6 +531,9 @@ def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, h
             a.set_editor_property("b_skin_state", False)       # no blush and sweat following phases that are buttons here
         except Exception:
             pass
+    if fx_materials:
+        setp(a, "fx_materials", fx_materials, warn)            # the skills' baked effects are drawn with these
+        setp(a, "fx_light_scale", LOOK.get("fx_light_scale", 3.0), warn)
     if LOOK.get("camera_fill"):
         # the fill that goes with the camera (the camera pawn makes it): what a white surface facing it shows -> lux
         c = LOOK.get("camera_fill_color", (1.0, 1.0, 1.0))
@@ -571,13 +577,13 @@ def space_check(check_mesh, room_actors, warn):
 
 
 def build_level(map_path, slice_name, slice_text, slice_data, placements, meshes, instances, masters, her, her_anims, him, his_anims, sounds,
-                check_mesh, warn, source_dir=None):
+                check_mesh, warn, source_dir=None, fx_materials=None):
     use_look(slice_data)
     les, eas = open_level(map_path)
     placed = place_room(eas, meshes, instances, placements, warn)
     lights = place_lights(eas, slice_data.get("lights", []), slice_data["anchor"], warn, slice_data.get("sky"))
     place_environment(eas, slice_data, "/Game/Mishi/Materials", "/Game/Mishi/" + slice_name, warn, source_dir)
-    couple = place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn)
+    couple = place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn, fx_materials)
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
     try:
         setp(world.get_world_settings(), "default_game_mode", unreal.MishiGameMode, warn)

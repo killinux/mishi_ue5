@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimInstanceProxy.h"
+#include "MishiSprings.h"
 #include "MishiAnimInstance.generated.h"
 
 class UAnimSequence;
@@ -25,6 +26,9 @@ struct FMishiAnimProxy : public FAnimInstanceProxy
 
 	FMishiClipSlot Now, Prev;
 	float Alpha = 1.f;                    // weight of Now
+	FMishiSprings Springs;                // hair, chains, skirt: simulated over the clips' pose (MishiSprings.h)
+	bool bSpringsOn = true;
+	float FloorZ = 0.f;
 };
 
 UCLASS(Transient, NotBlueprintable)
@@ -41,6 +45,14 @@ public:
 	UAnimSequence* Current() const { return Now.Seq; }
 	float CurrentTime() const { return Now.Time; }
 
+	/** The bone cloth of this body (a slice's "springs"); the proxy takes it up before its next update. */
+	void SetSprings(const FMishiSpringSetup& Setup) { SpringSetup = Setup; bSpringsDirty = true; }
+	/** From the animated pose again (after a seek or a teleport). */
+	void ResetSprings() { bSpringsReset = true; }
+	bool bSpringsOn = true;
+	/** The stage's floor under her, in the world (skirt tips and chains do not go through it). */
+	float FloorZ = 0.f;
+
 protected:
 	virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
 	virtual void DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy) override;
@@ -50,6 +62,8 @@ private:
 	FMishiClipSlot Now, Prev;
 	float Alpha = 1.f;
 	float BlendTime = 0.25f;
+	FMishiSpringSetup SpringSetup;
+	bool bSpringsDirty = false, bSpringsReset = false;
 
 	static void Step(FMishiClipSlot& Slot, float DeltaSeconds);
 };
