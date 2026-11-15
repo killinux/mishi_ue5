@@ -1,12 +1,14 @@
 # Mishi UE5 in one place: find the engine, build the editor module, import a slice, play it, record the tour.
 #   powershell -File Tools\ue.ps1 find
 #   powershell -File Tools\ue.ps1 build
+#   powershell -File Tools\ue.ps1 cpp                           (after a C++ change: quit the open editor, build, start it again)
 #   powershell -File Tools\ue.ps1 import [-Slice eros15_07] [-Force]
 #   powershell -File Tools\ue.ps1 play   [-Slice eros15_07]
-#   powershell -File Tools\ue.ps1 tour   [-Slice eros15_07]      (frames -> out\<slice>_tour.mp4, with the room's music)
+#   powershell -File Tools\ue.ps1 tour   [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (Tools\tour.json frame by frame -> out\<slice>_tour.mp4, with sound)
+#   powershell -File Tools\ue.ps1 shots  [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (look-dev stills -> Saved\MishiShots\<slice>_<tag>)
 #   powershell -File Tools\ue.ps1 editor
 param(
-    [ValidateSet('find', 'build', 'import', 'play', 'tour', 'shots', 'editor')] [string]$Do = 'find',
+    [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
     [switch]$Force,
     [string]$Shots = '',
@@ -78,6 +80,26 @@ switch ($Do) {
         & $bat MishiUEEditor Win64 Development "-Project=$Project" -WaitMutex -NoHotReloadFromIDE
         exit $LASTEXITCODE
     }
+    'cpp' {
+        # the editor holds the module's DLL: save and quit it, build, start it again and wait until it answers remote Python
+        $remote = Join-Path $Root 'Tools\ue_remote.py'
+        if (Get-Process UnrealEditor -ErrorAction SilentlyContinue) {
+            & python $remote -c "import unreal; unreal.EditorAssetLibrary.save_directory('/Game/Mishi', only_if_is_dirty=True, recursive=True); unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level(); unreal.SystemLibrary.quit_editor()" | Out-Null
+            $n = 0
+            while ((Get-Process UnrealEditor -ErrorAction SilentlyContinue) -and $n -lt 60) { Start-Sleep -Seconds 2; $n++ }
+        }
+        $bat = Join-Path $Engine 'Engine\Build\BatchFiles\Build.bat'
+        $log = Join-Path $Root '_work\build.log'
+        New-Item -ItemType Directory -Force (Join-Path $Root '_work') | Out-Null
+        & $bat MishiUEEditor Win64 Development "-Project=$Project" -WaitMutex -NoHotReloadFromIDE *> $log
+        $code = $LASTEXITCODE
+        Select-String -Path $log -Pattern 'error|Result:' | Select-Object -First 30 | ForEach-Object { $_.Line }
+        Start-Process -FilePath $Editor -ArgumentList "`"$Project`" -nosplash"
+        $n = 0
+        do { Start-Sleep -Seconds 5; $n++; $r = & python $remote -c "print('up')" 2>&1 | Select-Object -Last 1 } while ($r -notmatch '^up' -and $n -lt 40)
+        Write-Host "editor: $r after $($n * 5) s; build exit $code"
+        exit $code
+    }
     'import' {
         $env:MISHI_SLICE = $Slice
         $env:MISHI_QUIT = '1'
@@ -92,20 +114,25 @@ switch ($Do) {
         Start-Process -FilePath $Editor -ArgumentList "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -log"
     }
     'tour' {
+        # the film: Tools\tour.json (or -Shots <file>), every frame of every shot -> out\<slice>_tour[_<tag>].mp4.  The game
+        # records without sound and writes down what it played (timeline.json); Tools\tour_audio.py mixes the track from that.
+        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\tour.json' }
         $frames = Join-Path $Root "Saved\MishiTour\$Slice"
         if (Test-Path $frames) { Remove-Item -Recurse -Force $frames }
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 -MishiTour -MishiTourDir=`"$frames`" -nosound -log" 'tour'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended -log" 'tour'
         $out = Join-Path $Root 'out'
         New-Item -ItemType Directory -Force $out | Out-Null
-        $mp4 = Join-Path $out "${Slice}_tour.mp4"
-        $music = Get-ChildItem (Join-Path $Root "Import\$Slice\audio") -Filter 'bgm_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $mp4 = Join-Path $out "${Slice}_tour$(if ($Tag) { '_' + $Tag }).mp4"
         $pattern = Join-Path $frames 'frame_%05d.png'
-        if ($music) {
-            & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -i $music.FullName -filter:a 'volume=0.6' -shortest -c:v libx264 -pix_fmt yuv420p -crf 18 -c:a aac $mp4
+        $track = Join-Path $frames 'tour.m4a'
+        & python (Join-Path $Root 'Tools\tour_audio.py') --frames $frames --slice (Join-Path $Root "Import\$Slice") --out $track --ffmpeg $Ffmpeg
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $track)) {
+            & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -i $track -c:v libx264 -pix_fmt yuv420p -crf 16 -preset slow -c:a copy -shortest -movflags +faststart $mp4
         } else {
-            & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -c:v libx264 -pix_fmt yuv420p -crf 18 $mp4
+            & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -c:v libx264 -pix_fmt yuv420p -crf 16 -preset slow -movflags +faststart $mp4
         }
-        Write-Host "tour -> $mp4"
+        Write-Host "tour -> $mp4 ($((Get-ChildItem $frames -Filter *.png).Count) frames)"
+        exit $code
     }
     'shots' {
         # look-dev stills: Tools\shots_lookdev.json (or -Shots <file>) -> Saved\MishiShots\<slice>[_<tag>]\<name>.png

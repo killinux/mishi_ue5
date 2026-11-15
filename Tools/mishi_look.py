@@ -11,10 +11,28 @@ import unreal
 LOOK = {
     # URP's light intensity -> lux (directional) / candela (the others): URP's diffuse has no 1/pi, Unreal's has
     "light_scale": math.pi,
+    # the sun: the room's baked window light (the game bakes it into the lightmaps; here it is the one real sun)
+    "sun_scale": 1.0,
+    "sun_source_angle": 1.2,            # degrees: soft-edged window shadows
+    "sun_shaft": 4.0,                   # volumetric scattering: the shafts through the window
+    # the sun on skin: the bodies are on lighting channel 1 only, the sun on channel 0 - a twin of it on channel 1 gives them
+    # this share of it.  The full sun is 2.7 x the key: it burnt every patch of skin it touched out to white.
+    "sun_on_characters": 0.3,
+    # the key on the couple: the game's real-time directional light (22 degrees up, from the window side).  A second sun would
+    # be stopped by the walls and double every shadow: it becomes a soft box standing between the window and the bed.
+    "key_scale": 0.85,
+    "key_distance": 3.0,                # m from the couple, back along the light's direction
+    "key_size": (1.8, 1.4),             # m
+    "key_shaft": 0.3,
+    # the baked sky panel under the ceiling, the bed fills, the lamps
+    "panel_scale": 0.10,
+    "fill_scale": 0.35,
+    "lamp_scale": 1.5,
     "sky_intensity": 1.0,
-    "exposure_bias": 0.0,
-    "fog_density": 0.004,
-    "fog_falloff": 0.2,
+    "exposure_bias": -1.1,
+    "fog_density": 0.15,                # x 1/1000 per cm: a haze thick enough for the window light to show in the air of a 5 m room
+    "fog_falloff": 0.05,
+    "fog_scattering": 0.35,             # x the room's fog colour
 }
 
 eal = unreal.EditorAssetLibrary
@@ -121,51 +139,95 @@ def place_room(eas, meshes, instances, placements, warn):
     return placed
 
 
-def place_lights(eas, lights, warn):
+def lighting_channels(room, characters):
+    ch = unreal.LightingChannels()
+    ch.set_editor_property("channel0", room)
+    ch.set_editor_property("channel1", characters)
+    ch.set_editor_property("channel2", False)
+    return ch
+
+
+def light_common(c, L, color, warn, shaft=0.0, shadows=True, room=True, characters=True):
+    c.set_mobility(unreal.ComponentMobility.MOVABLE)
+    c.set_light_color(color, True)
+    setp(c, "cast_shadows", shadows and bool(L.get("shadows", True)), warn)
+    setp(c, "volumetric_scattering_intensity", shaft, warn)
+    setp(c, "lighting_channels", lighting_channels(room, characters), warn)
+
+
+def place_lights(eas, lights, anchor, warn):
+    """The room's lights as a Lumen rig.  Unity's types and places are kept; what the game baked becomes real light."""
     n = 0
     k = LOOK["light_scale"]
+    couple = anchor["position"]
     for L in lights:
         if not L.get("enabled", True):
             continue
         pos = ue_pos(L["position"])
-        fwd = ue_dir(unity_rotate(L["rotation"], (0.0, 0.0, 1.0)))     # a Unity light shines along its +Z, an Unreal one along +X
-        rot = unreal.MathLibrary.make_rot_from_x(fwd)
+        fwd_u = unity_rotate(L["rotation"], (0.0, 0.0, 1.0))           # a Unity light shines along its +Z, an Unreal one along +X
+        rot = unreal.MathLibrary.make_rot_from_x(ue_dir(fwd_u))
         kind = L.get("type", "Point")
         color = unreal.LinearColor(L["color"][0], L["color"][1], L["color"][2], 1.0)
         intensity = L["intensity"] * k
-        if kind == "Directional":
+        baked = L.get("bake_type", "Baked") == "Baked"
+        if kind == "Directional" and baked:
             a = spawn(eas, unreal.DirectionalLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.DirectionalLightComponent)
-            setp(c, "intensity", intensity, warn)
+            setp(c, "intensity", intensity * LOOK["sun_scale"], warn)
+            setp(c, "light_source_angle", LOOK["sun_source_angle"], warn)
             setp(c, "atmosphere_sun_light", False, warn)
+            setp(c, "forward_shading_priority", 1, warn)          # this one is the sun of the fog and of translucent surfaces
+            light_common(c, L, color, warn, LOOK["sun_shaft"], characters=False)
+            if LOOK["sun_on_characters"] > 0.0:
+                a2 = spawn(eas, unreal.DirectionalLight, pos, rot, L["name"] + "_Skin", "Mishi/Lights")
+                c2 = a2.get_component_by_class(unreal.DirectionalLightComponent)
+                setp(c2, "intensity", intensity * LOOK["sun_scale"] * LOOK["sun_on_characters"], warn)
+                setp(c2, "light_source_angle", LOOK["sun_source_angle"], warn)
+                setp(c2, "atmosphere_sun_light", False, warn)
+                setp(c2, "forward_shading_priority", 0, warn)
+                light_common(c2, L, color, warn, 0.0, room=False)
+                n += 1
+        elif kind == "Directional":
+            d = LOOK["key_distance"]
+            at = [couple[0] - fwd_u[0] * d, couple[1] + 0.35 - fwd_u[1] * d, couple[2] - fwd_u[2] * d]
+            a = spawn(eas, unreal.RectLight, ue_pos(at), rot, L["name"] + "_Key", "Mishi/Lights")
+            c = a.get_component_by_class(unreal.RectLightComponent)
+            setp(c, "intensity_units", unreal.LightUnits.CANDELAS, warn)
+            setp(c, "intensity", intensity * d * d * LOOK["key_scale"], warn)       # the same light on the couple as the directional gave
+            setp(c, "attenuation_radius", 900.0, warn)
+            setp(c, "source_width", LOOK["key_size"][0] * 100.0, warn)
+            setp(c, "source_height", LOOK["key_size"][1] * 100.0, warn)
+            setp(c, "barn_door_angle", 70.0, warn)
+            light_common(c, L, color, warn, LOOK["key_shaft"])
         elif kind == "Spot":
             a = spawn(eas, unreal.SpotLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.SpotLightComponent)
             setp(c, "intensity_units", unreal.LightUnits.CANDELAS, warn)
-            setp(c, "intensity", intensity, warn)
+            setp(c, "intensity", intensity * LOOK["fill_scale"], warn)
             setp(c, "attenuation_radius", L["range"] * 100.0, warn)
             setp(c, "outer_cone_angle", L["spot_angle"] * 0.5, warn)
-            setp(c, "inner_cone_angle", max(L.get("inner_spot_angle", 0.0) * 0.5, L["spot_angle"] * 0.3), warn)
-            setp(c, "source_radius", 4.0, warn)
+            setp(c, "inner_cone_angle", max(L.get("inner_spot_angle", 0.0) * 0.5, L["spot_angle"] * 0.25), warn)
+            setp(c, "source_radius", 12.0, warn)
+            light_common(c, L, color, warn, 0.2)
         elif kind in ("Rectangle", "Area", "Disc"):
+            size = L.get("area_size", [1.0, 1.0])
             a = spawn(eas, unreal.RectLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.RectLightComponent)
-            size = L.get("area_size", [1.0, 1.0])
             setp(c, "intensity_units", unreal.LightUnits.CANDELAS, warn)
-            setp(c, "intensity", intensity, warn)
-            setp(c, "attenuation_radius", L["range"] * 100.0, warn)
+            setp(c, "intensity", intensity * size[0] * size[1] * LOOK["panel_scale"], warn)      # radiance x area
+            setp(c, "attenuation_radius", max(L["range"], 6.0) * 100.0, warn)
             setp(c, "source_width", size[0] * 100.0, warn)
             setp(c, "source_height", size[1] * 100.0, warn)
+            light_common(c, L, color, warn, 0.0)
         else:
             a = spawn(eas, unreal.PointLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.PointLightComponent)
             setp(c, "intensity_units", unreal.LightUnits.CANDELAS, warn)
-            setp(c, "intensity", intensity, warn)
-            setp(c, "attenuation_radius", L["range"] * 100.0, warn)
-            setp(c, "source_radius", 3.0, warn)
-        c.set_mobility(unreal.ComponentMobility.MOVABLE)
-        c.set_light_color(color, True)
-        setp(c, "cast_shadows", bool(L.get("shadows", True)), warn)
+            setp(c, "intensity", intensity * LOOK["lamp_scale"], warn)
+            setp(c, "attenuation_radius", max(L["range"], 2.5) * 100.0, warn)
+            setp(c, "source_radius", 4.0, warn)
+            setp(c, "soft_source_radius", 6.0, warn)
+            light_common(c, L, color, warn, 0.5)
         n += 1
     return n
 
@@ -227,10 +289,13 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
         col = rs.get("fog_color", [1, 1, 1, 1])
         setp(fc, "fog_density", LOOK["fog_density"], warn)
         setp(fc, "fog_height_falloff", LOOK["fog_falloff"], warn)
-        setp(fc, "fog_inscattering_luminance", unreal.LinearColor(srgb_to_linear(col[0]) * 0.3, srgb_to_linear(col[1]) * 0.3, srgb_to_linear(col[2]) * 0.3, 1), warn)
+        f = LOOK["fog_scattering"]
+        setp(fc, "fog_inscattering_luminance", unreal.LinearColor(srgb_to_linear(col[0]) * f, srgb_to_linear(col[1]) * f, srgb_to_linear(col[2]) * f, 1), warn)
         setp(fc, "enable_volumetric_fog", True, warn)
-        setp(fc, "volumetric_fog_scattering_distribution", 0.6, warn)
+        setp(fc, "volumetric_fog_scattering_distribution", 0.7, warn)       # forward scattering: shafts glow towards the light
+        setp(fc, "volumetric_fog_albedo", unreal.Color(255, 244, 232, 255), warn)
         setp(fc, "volumetric_fog_extinction_scale", 1.0, warn)
+        setp(fc, "volumetric_fog_distance", 2500.0, warn)
     # post-processing: the game's ACES look is Unreal's own tonemapper; its bloom numbers; a fixed exposure
     ppv = spawn(eas, unreal.PostProcessVolume, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), "Post", "Mishi/Sky")
     setp(ppv, "unbound", True, warn)
@@ -298,7 +363,7 @@ def build_level(map_path, slice_name, slice_text, slice_data, placements, meshes
                 check_mesh, warn):
     les, eas = open_level(map_path)
     placed = place_room(eas, meshes, instances, placements, warn)
-    lights = place_lights(eas, slice_data.get("lights", []), warn)
+    lights = place_lights(eas, slice_data.get("lights", []), slice_data["anchor"], warn)
     place_environment(eas, slice_data, "/Game/Mishi/Materials", "/Game/Mishi/" + slice_name, warn)
     couple = place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn)
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()

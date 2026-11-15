@@ -29,6 +29,10 @@ AMishiCouple::AMishiCouple()
 		Body->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Body->bEnableUpdateRateOptimizations = false;
+		// the bodies are lit on channel 1 only: the room's hard sun (channel 0) does not burn the skin out - a weaker twin of it
+		// on channel 1 does the sun on skin (Tools/mishi_look.py puts every other light on both channels)
+		Body->LightingChannels.bChannel0 = false;
+		Body->LightingChannels.bChannel1 = true;
 	}
 	Voice = CreateDefaultSubobject<UAudioComponent>(TEXT("Voice"));
 	Voice->SetupAttachment(Origin);
@@ -205,6 +209,21 @@ void AMishiCouple::Enter(const FString& PartName, float Blend)
 	PlayVoice(P.Name);
 }
 
+void AMishiCouple::Seek(float Seconds)
+{
+	const FMishiPart* P = PartNow();
+	if (!P)
+		return;
+	const FString Name = P->Name;
+	Enter(Name, 0.f);
+	PartTime = FMath::Max(Seconds, 0.f);
+	if (UMishiAnimInstance* A = Player(Her))
+		A->Advance(PartTime);
+	if (UMishiAnimInstance* A = Player(His))
+		A->Advance(PartTime);
+	ApplyShapes();
+}
+
 void AMishiCouple::SetShowHim(bool bShow)
 {
 	SetHisStyle(bShow ? (HisStyle == 2 ? 0 : HisStyle) : 2);
@@ -221,6 +240,7 @@ void AMishiCouple::PlayVoice(const FString& PartName)
 		Voice->Stop();
 		Voice->SetSound(S);
 		Voice->Play();
+		OnSound.Broadcast(TEXT("voice"), File, 1.f);
 	}
 }
 
@@ -228,7 +248,11 @@ void AMishiCouple::SetSfx(bool bOn)
 {
 	bSfx = bOn;
 	if (!bSfx)
+	{
 		Sfx->Stop();
+		SfxFile.Reset();
+		OnSound.Broadcast(TEXT("sfx"), FString(), 0.f);
+	}
 	else if (const FMishiPart* P = PartNow())
 		ApplySfx(P->Name);
 }
@@ -243,14 +267,20 @@ void AMishiCouple::ApplySfx(const FString& PartName)
 	if (!Sound)
 	{
 		Sfx->Stop();
+		SfxFile.Reset();
+		OnSound.Broadcast(TEXT("sfx"), FString(), 0.f);
 		return;
 	}
-	if (Sfx->Sound == Sound && Sfx->IsPlaying())
+	// the loop that already plays goes on (by its file: without a sound device nothing "is playing")
+	if (SfxFile == X->File)
 		return;
 	Sfx->Stop();
 	Sfx->SetSound(Sound);
 	Sfx->SetVolumeMultiplier(X->Volume * SfxVolume);
 	Sfx->Play();
+	SfxFile = X->File;
+	SfxVolumeNow = X->Volume * SfxVolume;
+	OnSound.Broadcast(TEXT("sfx"), X->File, SfxVolumeNow);
 }
 
 void AMishiCouple::ResetAutoTimer()

@@ -46,11 +46,38 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	FName FocusBone = TEXT("Bip001-Head");
 
+	/** From the head bone (at the top of the neck) to between her eyes, in the bone's own axes: +X up the head, -Y out of the face. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	FVector FocusOffset = FVector(7.0, -9.0, 0.0);
+
+	/** What stays sharp round the focus, cm (front to back): close up the lens stops down so a face is sharp from nose to ear. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float SharpDepth = 16.f;
+
+	/** The camera does not sit behind walls or furniture: it comes in front of what stands between it and what it looks at. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bAvoidWalls = true;
+
+	/** Slender things (a bed post, a rail, a lamp's stem) never move the camera: where one stands between the lens and the couple
+	 *  it fades out of the picture instead - its shadow and its bounce stay in the room. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSeeThrough = true;
+
+	/** Slender: the middle side of the object's own box is under this many cm. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float SlenderSize = 50.f;
+
+	/** Seconds a faded thing stays away after it last stood in the way (the bodies move: without it a post would flicker). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float SeeThroughHold = 1.2f;
+
 	/** Seconds the focus takes to settle on a new distance. */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float FocusEase = 0.25f;
 
 	void Setup(AMishiCouple* InCouple);
+	/** The rig's numbers are read (the first tick after the couple is ready). */
+	bool IsSetUp() const { return Couple.IsValid(); }
 	void ResetView();
 	void SetView(float InYaw, float InY, float InZoom);
 	void Turn(float DxPixels, float DyPixels);
@@ -61,8 +88,19 @@ public:
 	/** Orbit round a point of the world (a bone) instead of the rig's own target; ClearTargetWorld goes back. */
 	void SetTargetWorld(const FVector& World) { bTargetOverride = true; TargetOverrideWorld = World; }
 	void ClearTargetWorld() { bTargetOverride = false; }
+	/** The camera at a place of the world looking at another (look-dev shots along a bone's axis); ClearPose goes back to the orbit. */
+	void SetPose(const FVector& WorldPos, const FVector& WorldTarget, const FVector& WorldUp = FVector::UpVector)
+	{
+		bPoseOverride = true;
+		PoseOverridePos = WorldPos;
+		PoseOverrideTarget = WorldTarget;
+		PoseOverrideUp = WorldUp;
+	}
+	void ClearPose() { bPoseOverride = false; }
 	/** Vertical field of view in degrees (<= 0: the game's own). */
 	void SetFovOverride(float VerticalDegrees) { FovOverride = VerticalDegrees; }
+	/** A cut: the next frame stands where the walls leave it and focuses at once, without easing in from the last view. */
+	void Cut() { bCut = true; }
 	/** The game's limits on zoom and pan (off for the look-dev shots, which go closer than the game lets the player). */
 	bool bLimits = true;
 	/** Distance from the camera to what it orbits, cm - the focus distance for the depth of field. */
@@ -73,6 +111,7 @@ public:
 	float GetZoom() const { return Zoom; }
 	float DefaultZoom() const { return Rig.Zoom; }
 	float DefaultYaw() const { return Rig.XAxis; }
+	float DefaultY() const { return Rig.YAxis; }
 
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -83,11 +122,24 @@ private:
 	float Yaw = 0.f, Y = 0.5f, Zoom = 1.f;
 	FVector PanU = FVector::ZeroVector;   // Unity, anchor space
 	FVector RightU = FVector(1, 0, 0), UpU = FVector(0, 1, 0);   // the camera's right / up in anchor space (for panning)
+	bool bPoseOverride = false;
+	FVector PoseOverridePos = FVector::ZeroVector, PoseOverrideTarget = FVector::ZeroVector, PoseOverrideUp = FVector::UpVector;
 	bool bTargetOverride = false;
 	FVector TargetOverrideWorld = FVector::ZeroVector;
 	float FovOverride = 0.f;
 	float LastDistance = 300.f;
 	float Focus = 300.f;
+	float Pull = 1.f;                     // how much of the orbit's distance the walls leave (eased)
+	bool bCut = true;
+	struct FFade
+	{
+		float Amount = 0.f;               // 0 whole .. 1 gone
+		float Hold = 0.f;                 // seconds it still stays away after the last time it stood in the way
+	};
+	TMap<TWeakObjectPtr<UPrimitiveComponent>, FFade> Faded;   // what hides the couple now or did a moment ago
+	bool IsSlender(const UPrimitiveComponent* Comp) const;
+	float FreeFraction(const FVector& Target, const FVector& Pos) const;
+	void UpdateSeeThrough(float DeltaSeconds, const FVector& Pos);
 	void UpdateLens(float DeltaSeconds, const FVector& Pos, const FRotator& Look, float VerticalFov, double Aspect);
 
 	float ZoomMax() const { return FMath::Max(Rig.ZoomMax, Rig.Zoom * 3.f); }

@@ -542,6 +542,11 @@ def assign_skeletal(mesh, instances, male_style="skin"):
 
 def assign_static(mesh, instances):
     missing = []
+    # the camera's wall check traces against the meshes' own triangles (they come without collision shapes)
+    body = mesh.get_editor_property("body_setup")
+    if body is not None and body.get_editor_property("collision_trace_flag") != unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE:
+        body.set_editor_property("collision_trace_flag", unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE)
+        mesh.modify()
     for i, slot in enumerate(slot_names(mesh)):
         mi = instances.get(slot)
         if mi is None:

@@ -16,6 +16,10 @@ class USkeletalMeshComponent;
 class USoundBase;
 class UMishiAnimInstance;
 
+/** A sound starts or stops: Kind "voice" / "sfx", the file's name (empty: that kind stops), its volume.  The recorded tour writes
+ *  these down with their frames, so the film's sound track is put together afterwards exactly as the game played it. */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FMishiSoundEvent, const FString& /*Kind*/, const FString& /*File*/, float /*Volume*/);
+
 UCLASS()
 class MISHIUE_API AMishiCouple : public AActor
 {
@@ -104,15 +108,22 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float SfxVolume = 0.8f;
 
+	FMishiSoundEvent OnSound;
+
 	const FMishiSlice& Slice() const { return Data; }
 	bool IsReady() const { return bReady; }
 	int32 CurrentPhase() const { return PhaseNow; }
 	FString CurrentPart() const;
 	FString CurrentLine() const;
+	/** The part's sound loop that plays now (empty: none) and its volume. */
+	const FString& PlayingSfx() const { return SfxFile; }
+	float PlayingSfxVolume() const { return SfxVolumeNow; }
 
 	/** A phase button: the state the game's controller would go to from the current phase. */
 	void GoPhase(int32 Wanted);
 	void Enter(const FString& PartName, float Blend);
+	/** The current part again, from this many seconds into it (look-dev stills of one moment of the motion). */
+	void Seek(float Seconds);
 	void SetShowHim(bool bShow);
 	void SetSfx(bool bOn);
 	void SetHisStyle(int32 Style);
@@ -140,6 +151,8 @@ private:
 	float LineTimer = 0.f;
 	float Wet = 0.f;
 	float Flush = 0.f;
+	FString SfxFile;                      // the part loop that plays now
+	float SfxVolumeNow = 0.f;
 	void StepSkin(float DeltaSeconds);
 
 	bool LoadSlice();

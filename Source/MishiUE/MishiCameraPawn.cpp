@@ -2,7 +2,12 @@
 #include "MishiCouple.h"
 #include "MishiUE.h"
 #include "Camera/CameraComponent.h"
+#include "CollisionQueryParams.h"
+#include "Components/PrimitiveComponent.h"
+#include "Engine/HitResult.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -94,6 +99,124 @@ FVector2D AMishiCameraPawn::Orbit(float At) const
 	return FMath::Lerp(A, B, double(T));
 }
 
+bool AMishiCameraPawn::IsSlender(const UPrimitiveComponent* Comp) const
+{
+	const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Comp);
+	if (!Mesh || !Mesh->GetStaticMesh())
+		return false;
+	// the object's own box, not the world's (which grows when a long board stands at an angle)
+	const FVector Size = Mesh->GetStaticMesh()->GetBounds().BoxExtent * 2.0 * Mesh->GetComponentScale().GetAbs();
+	return Size.X + Size.Y + Size.Z - Size.GetMax() - Size.GetMin() < SlenderSize;
+}
+
+void AMishiCameraPawn::UpdateSeeThrough(float DeltaSeconds, const FVector& Pos)
+{
+	AMishiCouple* C = Couple.Get();
+	const UWorld* W = GetWorld();
+	if (!C || !W)
+		return;
+	// the lines of sight to the bodies: what a slender thing crosses of them, it hides
+	TSet<UPrimitiveComponent*> Between;
+	if (bSeeThrough)
+	{
+		// her skeleton is Bip001, his Bip000
+		static const FName Bones[] = {TEXT("Bip001-Head"), TEXT("Bip001-Neck"), TEXT("Bip001-Spine2"), TEXT("Bip001-Pelvis"),
+			TEXT("Bip001-L-UpperArm"), TEXT("Bip001-R-UpperArm"), TEXT("Bip001-L-Forearm"), TEXT("Bip001-R-Forearm"),
+			TEXT("Bip001-L-Hand"), TEXT("Bip001-R-Hand"), TEXT("Bip001-L-Thigh"), TEXT("Bip001-R-Thigh"),
+			TEXT("Bip001-L-Calf"), TEXT("Bip001-R-Calf"), TEXT("Bip001-L-Foot"), TEXT("Bip001-R-Foot"),
+			TEXT("Bip000-Head"), TEXT("Bip000-Neck"), TEXT("Bip000-Spine1"), TEXT("Bip000-Pelvis"),
+			TEXT("Bip000-L-UpperArm"), TEXT("Bip000-R-UpperArm"), TEXT("Bip000-L-Hand"), TEXT("Bip000-R-Hand"),
+			TEXT("Bip000-L-Thigh"), TEXT("Bip000-R-Thigh"), TEXT("Bip000-L-Calf"), TEXT("Bip000-R-Calf"),
+			TEXT("Bip000-L-Foot"), TEXT("Bip000-R-Foot")};
+		for (const USkeletalMeshComponent* Body : {C->GetHer(), C->GetHim()})
+		{
+			if (!Body || !Body->IsVisible())
+				continue;
+			for (const FName& Bone : Bones)
+			{
+				if (Body->GetBoneIndex(Bone) == INDEX_NONE)
+					continue;
+				FVector At = Body->GetBoneLocation(Bone);
+				if (Bone.ToString().EndsWith(TEXT("-Head")))
+					At += Body->GetBoneQuaternion(Bone).RotateVector(FVector(9.0, -3.0, 0.0));      // the head's middle, not the top of the neck
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(MishiSeeThrough), true);
+				Params.AddIgnoredActor(this);
+				Params.AddIgnoredActor(C);
+				FVector From = Pos;
+				for (int32 Step = 0; Step < 6; ++Step)
+				{
+					FHitResult Hit;
+					if (!W->LineTraceSingleByChannel(Hit, From, At, ECC_Camera, Params))
+						break;
+					UPrimitiveComponent* Comp = Hit.GetComponent();
+					if (!Comp || !IsSlender(Comp))
+						break;                                  // furniture and walls stay
+					if (FVector::DistSquared(Hit.Location, At) > FMath::Square(25.0))      // what the body rests against stays
+						Between.Add(Comp);
+					Params.AddIgnoredComponent(Comp);
+					From = Hit.Location;
+				}
+			}
+		}
+	}
+	for (UPrimitiveComponent* Comp : Between)
+		Faded.FindOrAdd(Comp).Hold = SeeThroughHold;
+	for (auto It = Faded.CreateIterator(); It; ++It)
+	{
+		UPrimitiveComponent* Comp = It.Key().Get();
+		if (!Comp)
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		FFade& F = It.Value();
+		if (bCut && !Between.Contains(Comp))
+			F.Hold = 0.f;                               // a cut shows the new view as it is
+		// out quickly, back in gently and only after it has stayed out of the way for a moment
+		const float Want = F.Hold > 0.f ? 1.f : 0.f;
+		const float Ease = Want > F.Amount ? 0.12f : 0.35f;
+		F.Amount = bCut || DeltaSeconds <= 0.f ? Want : FMath::Lerp(F.Amount, Want, 1.f - FMath::Exp(-DeltaSeconds / Ease));
+		if (FMath::Abs(F.Amount - Want) < 0.01f)
+			F.Amount = Want;
+		F.Hold = FMath::Max(F.Hold - DeltaSeconds, 0.f);
+		Comp->SetCustomPrimitiveDataFloat(0, F.Amount);   // LensFade of the room's materials
+		if (F.Amount <= 0.f && F.Hold <= 0.f)
+			It.RemoveCurrent();
+	}
+}
+
+float AMishiCameraPawn::FreeFraction(const FVector& Target, const FVector& Pos) const
+{
+	const UWorld* W = GetWorld();
+	const double Dist = (Pos - Target).Size();
+	if (!W || Dist < 30.0)
+		return 1.f;
+	const FVector Dir = (Pos - Target) / Dist;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(MishiCamera), true);        // against the meshes' own triangles
+	Params.AddIgnoredActor(this);
+	if (Couple.IsValid())
+		Params.AddIgnoredActor(Couple.Get());
+	FVector From = Target;
+	for (int32 Step = 0; Step < 12; ++Step)
+	{
+		FHitResult Hit;
+		if (!W->LineTraceSingleByChannel(Hit, From, Pos, ECC_Camera, Params))
+			return 1.f;
+		const double At = (Hit.Location - Target) | Dir;
+		const UPrimitiveComponent* Comp = Hit.GetComponent();
+		// a slender thing only passes through the picture (and fades where it hides the couple); a wall, a headboard or a
+		// mattress is what the camera must not end up behind
+		if (Comp && IsSlender(Comp))
+		{
+			Params.AddIgnoredComponent(Comp);
+			From = Hit.Location + Dir * 1.0;
+			continue;
+		}
+		return float(FMath::Clamp((At - 12.0) / Dist, 0.08, 1.0));
+	}
+	return 1.f;
+}
+
 void AMishiCameraPawn::UpdateLens(float DeltaSeconds, const FVector& Pos, const FRotator& Look, float VerticalFov, double Aspect)
 {
 	FPostProcessSettings& PP = Camera->PostProcessSettings;
@@ -110,7 +233,8 @@ void AMishiCameraPawn::UpdateLens(float DeltaSeconds, const FVector& Pos, const 
 	AMishiCouple* C = Couple.Get();
 	if (C && C->GetHer() && !FocusBone.IsNone() && C->GetHer()->GetBoneIndex(FocusBone) != INDEX_NONE)
 	{
-		const FVector Local = Look.UnrotateVector(C->GetHer()->GetBoneLocation(FocusBone) - Pos);       // x forward, y right, z up
+		const FVector Eyes = C->GetHer()->GetBoneLocation(FocusBone) + C->GetHer()->GetBoneQuaternion(FocusBone).RotateVector(FocusOffset);
+		const FVector Local = Look.UnrotateVector(Eyes - Pos);       // x forward, y right, z up
 		if (Local.X > 5.0)
 		{
 			const double TanV = FMath::Tan(FMath::DegreesToRadians(VerticalFov * 0.5));
@@ -119,11 +243,16 @@ void AMishiCameraPawn::UpdateLens(float DeltaSeconds, const FVector& Pos, const 
 				Want = float(Local.X);
 		}
 	}
-	const float K = FocusEase > 0.f && DeltaSeconds > 0.f ? 1.f - FMath::Exp(-DeltaSeconds / FocusEase) : 1.f;
+	const float K = FocusEase > 0.f && DeltaSeconds > 0.f && !bCut ? 1.f - FMath::Exp(-DeltaSeconds / FocusEase) : 1.f;
 	Focus = FMath::Lerp(Focus, Want, K);
 	PP.DepthOfFieldFocalDistance = Focus;
-	PP.DepthOfFieldFstop = Aperture;
 	PP.DepthOfFieldSensorWidth = 36.f;
+	// a real lens: the depth of field shrinks with the square of the distance - wide open a face at half a metre is sharp over
+	// millimetres.  The lens stops down as far as SharpDepth asks (depth of field ~ 2 N c s^2 / f^2, c = 0.03 mm on full frame).
+	const double FocalMm = 36.0 / (2.0 * FMath::Tan(FMath::DegreesToRadians(VerticalFov * 0.5)) * Aspect);
+	const double SMm = FMath::Max(double(Focus), 10.0) * 10.0;
+	const double Needed = SharpDepth * 10.0 * FocalMm * FocalMm / (2.0 * 0.03 * SMm * SMm);
+	PP.DepthOfFieldFstop = float(FMath::Clamp(FMath::Max(double(Aperture), Needed), 1.2, 22.0));
 }
 
 void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
@@ -154,11 +283,26 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 	}
 	const FVector OffsetU = Rot.RotateVector(FVector(0, O.X, -O.Y)) * Zoom;
 	const FVector PosU = TargetU + OffsetU;
-	const FVector Pos = C->UnityToWorld(PosU);
-	const FVector Target = C->UnityToWorld(TargetU);
-	const FVector Up = C->UnityDirToWorld(Anchor.Rot.RotateVector(FVector(0, 1, 0)));
+	FVector Pos = C->UnityToWorld(PosU);
+	FVector Target = C->UnityToWorld(TargetU);
+	FVector Up = C->UnityDirToWorld(Anchor.Rot.RotateVector(FVector(0, 1, 0)));
+	if (bPoseOverride)
+	{
+		Pos = PoseOverridePos;
+		Target = PoseOverrideTarget;
+		Up = PoseOverrideUp;
+	}
+	else if (bAvoidWalls)
+	{
+		// in at once, out again gently
+		const float Free = FreeFraction(Target, Pos);
+		const float Ease = Free < Pull ? 0.05f : 0.5f;
+		Pull = DeltaSeconds > 0.f && !bCut ? FMath::Lerp(Pull, Free, 1.f - FMath::Exp(-DeltaSeconds / Ease)) : Free;
+		Pos = Target + (Pos - Target) * FMath::Min(Pull, 1.f);
+	}
 	const FRotator Look = FRotationMatrix::MakeFromXZ(Target - Pos, Up).Rotator();
 	SetActorLocationAndRotation(Pos, Look);
+	UpdateSeeThrough(DeltaSeconds, Pos);
 	LastDistance = float((Target - Pos).Size());
 	// the camera's right and up back in anchor space, for panning in the screen plane
 	const FVector ForwardU = (TargetU - PosU).GetSafeNormal();
@@ -182,6 +326,8 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 				UpdateLens(DeltaSeconds, Pos, Look, VerticalFov, Aspect);
 			}
 		}
+	if (DeltaSeconds > 0.f)
+		bCut = false;
 }
 
 void AMishiCameraPawn::Tick(float DeltaSeconds)

@@ -1,8 +1,15 @@
 [
-  {"name": "01_p1_game",   "phase": 0, "seconds": 3.0, "yaw": 0,   "y": -1,  "zoom": 1.0},
-  {"name": "02_p1_face",   "phase": -1, "seconds": 1.5, "yaw": 0,  "y": 0.5, "zoom": 0.17, "bone": "Bip001-Head"},
-  {"name": "03_p1_side",   "phase": -1, "seconds": 1.5, "yaw": 90, "y": 0.5, "zoom": 0.8},
-  {"name": "04_p1_wide",   "phase": -1, "seconds": 1.5, "yaw": 30, "y": 0.62, "zoom": 1.8},
-  {"name": "05_p3_front",  "phase": 2, "seconds": 3.0, "yaw": 180, "y": 0.5, "zoom": 0.7},
-  {"name": "06_p3_body",   "phase": -1, "seconds": 1.5, "yaw": 20, "y": 0.5, "zoom": 0.4, "bone": "Bip001-Spine1"}
+  {"name": "01_game",      "phase": 0, "at": 2.0, "seconds": 1.5, "yaw": 0, "y": -1, "zoom": 1.0},
+  {"name": "02_face",      "at": 2.6, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.35], "distance": 46},
+  {"name": "03_eyes",      "at": 2.6, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [8, -8, 0], "from": [0.1, -1, 0.15], "distance": 22},
+  {"name": "04_profile",   "at": 2.6, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [5, -4, 0], "from": [0.2, -0.3, 1], "distance": 50},
+  {"name": "05_hair_back", "at": 2.6, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [6, 0, 0], "from": [0.4, 1, 0.3], "distance": 60},
+  {"name": "06_bust",      "at": 2.6, "seconds": 1.0, "bone": "Bip001-Spine2", "from": [0.3, -1, 0.3], "distance": 75},
+  {"name": "07_skin",      "at": 2.6, "seconds": 1.0, "bone": "Bip001-L-Clavicle", "from": [0.4, -1, 0.5], "distance": 26},
+  {"name": "08_side",      "at": 2.6, "seconds": 1.0, "yaw": 90, "y": 0.5, "zoom": 0.8},
+  {"name": "09_wide",      "at": 2.6, "seconds": 1.0, "yaw": -35, "y": 0.7, "zoom": 1.9},
+  {"name": "10_p3",        "phase": 2, "seconds": 3.0, "yaw": 20, "y": 0.6, "zoom": 0.75},
+  {"name": "11_p3_low",    "seconds": 1.0, "yaw": 150, "y": 0.35, "zoom": 1.2},
+  {"name": "12_p4",        "phase": 3, "seconds": 4.0, "yaw": -30, "y": 0.55, "zoom": 0.7},
+  {"name": "13_p4_far",    "seconds": 1.0, "yaw": 200, "y": 0.6, "zoom": 2.4}
 ]

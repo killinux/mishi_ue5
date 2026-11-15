@@ -3,6 +3,7 @@
 #include "MishiCouple.h"
 #include "MishiUE.h"
 #include "SMishiHud.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -44,8 +45,6 @@ void AMishiPlayerController::BeginPlay()
 		Hud = SNew(SMishiHud).Owner(this);
 		Viewport->AddViewportWidgetContent(Hud.ToSharedRef(), 10);
 	}
-	if (FParse::Param(FCommandLine::Get(), TEXT("MishiTour")))
-		StartTour();
 	FString ShotsFile;
 	if (FParse::Value(FCommandLine::Get(), TEXT("MishiShots="), ShotsFile))
 		StartShots(ShotsFile);
@@ -85,10 +84,35 @@ void AMishiPlayerController::StartShots(const FString& File)
 		const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
 		if (O->TryGetArrayField(TEXT("offset"), Off) && Off && Off->Num() >= 3)
 			S.BoneOffset = FVector((*Off)[0]->AsNumber(), (*Off)[1]->AsNumber(), (*Off)[2]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* OffLocal = nullptr;
+		if (O->TryGetArrayField(TEXT("offset_local"), OffLocal) && OffLocal && OffLocal->Num() >= 3)
+			S.BoneOffsetLocal = FVector((*OffLocal)[0]->AsNumber(), (*OffLocal)[1]->AsNumber(), (*OffLocal)[2]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* From = nullptr;
+		if (O->TryGetArrayField(TEXT("from"), From) && From && From->Num() >= 3)
+		{
+			S.bFrom = true;
+			S.From = FVector((*From)[0]->AsNumber(), (*From)[1]->AsNumber(), (*From)[2]->AsNumber());
+		}
+		const TArray<TSharedPtr<FJsonValue>>* UpAxis = nullptr;
+		if (O->TryGetArrayField(TEXT("up"), UpAxis) && UpAxis && UpAxis->Num() >= 3)
+		{
+			S.bUp = true;
+			S.Up = FVector((*UpAxis)[0]->AsNumber(), (*UpAxis)[1]->AsNumber(), (*UpAxis)[2]->AsNumber());
+		}
+		if (O->TryGetNumberField(TEXT("distance"), N)) S.Distance = float(N);
+		O->TryGetStringField(TEXT("cmd"), S.Command);
+		if (O->TryGetNumberField(TEXT("drift"), N)) S.Drift = float(N);
+		if (O->TryGetNumberField(TEXT("rise"), N)) S.Rise = float(N);
+		if (O->TryGetNumberField(TEXT("dolly"), N)) S.Dolly = float(N);
+		if (O->TryGetNumberField(TEXT("push"), N)) S.Push = float(N);
+		if (O->TryGetNumberField(TEXT("at"), N)) S.At = float(N);
+		if (O->TryGetNumberField(TEXT("his_style"), N)) S.HisStyle = int32(N);
 		if (S.Name.IsEmpty())
 			S.Name = FString::Printf(TEXT("shot_%02d"), Shots.Num());
 	}
 	bShots = Shots.Num() > 0;
+	bRecordAll = FParse::Param(FCommandLine::Get(), TEXT("MishiTour"));
+	RecordFrame = 0;
 	ShotIndex = -1;
 	ShotClock = 0.f;
 	UE_LOG(LogMishi, Log, TEXT("shots: %d from %s into %s"), Shots.Num(), *File, *ShotsDir);
@@ -98,7 +122,7 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 {
 	AMishiCouple* C = Couple.Get();
 	AMishiCameraPawn* Cam = GetCam();
-	if (!C || !C->IsReady() || !Cam)
+	if (!C || !C->IsReady() || !Cam || !Cam->IsSetUp())
 		return;
 	if (ShotQuitFrames > 0)
 	{
@@ -109,6 +133,26 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	}
 	C->bAuto = false;
 	Cam->bLimits = false;
+	if (bRecordAll && !SoundHandle.IsValid())
+	{
+		SoundHandle = C->OnSound.AddWeakLambda(this, [this](const FString& Kind, const FString& File, float Volume)
+		{
+			FSoundMark& M = SoundMarks.AddDefaulted_GetRef();
+			M.Frame = RecordFrame;
+			M.Kind = Kind;
+			M.File = File;
+			M.Volume = Volume;
+		});
+		// the loop the scene started with plays on into the film
+		if (!C->PlayingSfx().IsEmpty())
+		{
+			FSoundMark& M = SoundMarks.AddDefaulted_GetRef();
+			M.Frame = 0;
+			M.Kind = TEXT("sfx");
+			M.File = C->PlayingSfx();
+			M.Volume = C->PlayingSfxVolume();
+		}
+	}
 	if (ShotIndex < 0 || ShotClock >= Shots[ShotIndex].Seconds)
 	{
 		++ShotIndex;
@@ -116,89 +160,95 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 		if (ShotIndex >= Shots.Num())
 		{
 			UE_LOG(LogMishi, Log, TEXT("shots: done"));
+			if (bRecordAll)
+				WriteTimeline();
 			ShotIndex = Shots.Num() - 1;
 			ShotQuitFrames = 6;
 			return;
 		}
 		const FShot& S = Shots[ShotIndex];
+		ShotFrames.Add(RecordFrame);
 		if (S.Phase >= 0)
 			C->GoPhase(S.Phase);
-		C->SetShowHim(!S.bHideHim);
+		if (S.At >= 0.f)
+			C->Seek(S.At);
+		if (S.HisStyle >= 0)
+			C->SetHisStyle(S.HisStyle);
+		else
+			C->SetShowHim(!S.bHideHim);
 		Cam->SetFovOverride(S.Fov);
-		Cam->SetView(Cam->DefaultYaw() + S.YawOffset, S.Y < 0.f ? Cam->GetY() : S.Y, Cam->DefaultZoom() * S.ZoomScale);
+		bShotStart = true;
+		ShotY = S.Y < 0.f ? Cam->DefaultY() : S.Y;
+		ShotZoom = Cam->DefaultZoom() * S.ZoomScale;
+		// a cut: no easing in from the last view, no temporal history of the last picture
+		Cam->Cut();
+		if (PlayerCameraManager)
+			PlayerCameraManager->SetGameCameraCutThisFrame();
 		if (Hud.IsValid())
 			Hud->SetVisibility(S.bHud ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed);
+		if (!S.Command.IsEmpty())
+			ConsoleCommand(S.Command);
 	}
 	const FShot& S = Shots[ShotIndex];
+	Cam->ClearPose();
 	if (!S.Bone.IsEmpty() && C->GetHer())
-		Cam->SetTargetWorld(C->GetHer()->GetBoneLocation(FName(*S.Bone)) + S.BoneOffset);
+	{
+		const FName Bone(*S.Bone);
+		const FQuat Q = C->GetHer()->GetBoneQuaternion(Bone);
+		const FVector At = C->GetHer()->GetBoneLocation(Bone) + S.BoneOffset + Q.RotateVector(S.BoneOffsetLocal);
+		if (bShotStart)
+		{
+			ShotAt = At;
+			ShotDir = Q.RotateVector(S.From.GetSafeNormal());
+			ShotUp = S.bUp ? Q.RotateVector(S.Up.GetSafeNormal()) : FVector::UpVector;
+		}
+		else
+		{
+			// the bone's place is followed closely, its turning slowly: the camera neither swings with every nod nor is left
+			// looking at a chin when the head goes back
+			ShotAt = FMath::Lerp(ShotAt, At, 1.f - FMath::Exp(-DeltaTime / 0.2f));
+			const float Turn = 1.f - FMath::Exp(-DeltaTime / 0.7f);
+			ShotDir = FMath::Lerp(ShotDir, Q.RotateVector(S.From.GetSafeNormal()), Turn).GetSafeNormal();
+			if (S.bUp)
+				ShotUp = FMath::Lerp(ShotUp, Q.RotateVector(S.Up.GetSafeNormal()), Turn).GetSafeNormal();
+		}
+		Cam->SetTargetWorld(ShotAt);
+		if (S.bFrom)
+			Cam->SetPose(ShotAt + ShotDir * FMath::Max(S.Distance + S.Push * ShotClock, 12.f), ShotAt, ShotUp);
+	}
 	else
 		Cam->ClearTargetWorld();
+	bShotStart = false;
+	Cam->SetView(Cam->DefaultYaw() + S.YawOffset + S.Drift * ShotClock, ShotY + S.Rise * ShotClock, ShotZoom * FMath::Max(1.f + S.Dolly * ShotClock, 0.05f));
 	ShotClock += DeltaTime;
-	if (ShotClock >= S.Seconds)
+	if (bRecordAll)
+		FScreenshotRequest::RequestScreenshot(ShotsDir / FString::Printf(TEXT("frame_%05d.png"), RecordFrame++), S.bHud, false);
+	else if (ShotClock >= S.Seconds)
 		FScreenshotRequest::RequestScreenshot(ShotsDir / (S.Name + TEXT(".png")), S.bHud, false);
 }
 
-void AMishiPlayerController::StartTour()
+void AMishiPlayerController::WriteTimeline() const
 {
-	if (!FParse::Value(FCommandLine::Get(), TEXT("MishiTourDir="), TourDir))
-		TourDir = FPaths::ProjectSavedDir() / TEXT("MishiTour");
-	IFileManager::Get().MakeDirectory(*TourDir, true);
-	// the game's own view first, then round the couple through the four phases (phase 4's climax runs into its after-loop)
-	Tour = {
-		{0, 7.f, 0.f, -1.f, 1.f},
-		{1, 7.f, 35.f, 0.62f, 0.85f},
-		{2, 7.f, 150.f, 0.55f, 0.9f},
-		{3, 9.f, 220.f, 0.6f, 1.05f},
-		{-1, 6.f, 300.f, 0.78f, 1.25f},
-	};
-	bTour = true;
-	TourIndex = -1;
-	TourClock = 0.f;
-	TourFrame = 0;
-	UE_LOG(LogMishi, Log, TEXT("tour: %d stops into %s"), Tour.Num(), *TourDir);
-}
-
-void AMishiPlayerController::StepTour(float DeltaTime)
-{
-	AMishiCouple* C = Couple.Get();
-	AMishiCameraPawn* Cam = GetCam();
-	if (!C || !C->IsReady() || !Cam)
-		return;
-	C->bAuto = false;
-	// the next stop: its phase button, the camera on its way to the stop's view
-	float End = 0.f;
-	for (int32 I = 0; I <= TourIndex && I < Tour.Num(); ++I)
-		End += Tour[I].Seconds;
-	if (TourIndex < 0 || TourClock >= End)
+	// read by Tools/tour_audio.py: the film's sound track is mixed from the sound files as the scene played them
+	FString Text = FString::Printf(TEXT("{\n  \"frames\": %d,\n  \"shots\": ["), RecordFrame);
+	for (int32 I = 0; I < ShotFrames.Num() && I < Shots.Num(); ++I)
+		Text += FString::Printf(TEXT("%s\n    {\"name\": \"%s\", \"frame\": %d}"), I ? TEXT(",") : TEXT(""), *Shots[I].Name.ReplaceCharWithEscapedChar(), ShotFrames[I]);
+	Text += TEXT("\n  ],\n  \"sounds\": [");
+	for (int32 I = 0; I < SoundMarks.Num(); ++I)
 	{
-		++TourIndex;
-		if (TourIndex >= Tour.Num())
-		{
-			UE_LOG(LogMishi, Log, TEXT("tour: %d frames, done"), TourFrame);
-			bTour = false;
-			ConsoleCommand(TEXT("quit"));
-			return;
-		}
-		if (Tour[TourIndex].Phase >= 0)
-			C->GoPhase(Tour[TourIndex].Phase);
-		TourStopStart = TourClock;
-		FromYaw = Cam->GetYaw();
-		FromY = Cam->GetY();
-		FromZoom = Cam->GetZoom();
+		const FSoundMark& M = SoundMarks[I];
+		Text += FString::Printf(TEXT("%s\n    {\"frame\": %d, \"kind\": \"%s\", \"file\": \"%s\", \"volume\": %.3f}"), I ? TEXT(",") : TEXT(""), M.Frame, *M.Kind,
+			*M.File.ReplaceCharWithEscapedChar(), M.Volume);
 	}
-	const FTourStop& S = Tour[TourIndex];
-	const float T = FMath::SmoothStep(0.f, 1.f, FMath::Clamp((TourClock - TourStopStart) / 3.f, 0.f, 1.f));
-	const float ToYaw = Cam->DefaultYaw() + S.YawOffset + 3.f * (TourClock - TourStopStart);     // and a slow drift
-	const float ToY = S.Y < 0.f ? FromY : S.Y;
-	const float ToZoom = Cam->DefaultZoom() * S.ZoomScale;
-	Cam->SetView(FMath::Lerp(FromYaw, ToYaw, T), FMath::Lerp(FromY, ToY, T), FMath::Lerp(FromZoom, ToZoom, T));
-	FScreenshotRequest::RequestScreenshot(TourDir / FString::Printf(TEXT("frame_%05d.png"), TourFrame++), true, false);
-	TourClock += DeltaTime;
+	Text += TEXT("\n  ]\n}\n");
+	FFileHelper::SaveStringToFile(Text, *(ShotsDir / TEXT("timeline.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
 void AMishiPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (SoundHandle.IsValid() && Couple.IsValid())
+		Couple->OnSound.Remove(SoundHandle);
+	SoundHandle.Reset();
 	if (Hud.IsValid())
 		if (UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr)
 			Viewport->RemoveViewportWidgetContent(Hud.ToSharedRef());
@@ -230,11 +280,6 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 			Couple = *It;
 			break;
 		}
-	if (bTour)
-	{
-		StepTour(DeltaTime);
-		return;
-	}
 	if (bShots)
 	{
 		StepShots(DeltaTime);

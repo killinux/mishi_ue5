@@ -22,7 +22,7 @@ import os
 
 import unreal
 
-VERSION = 2
+VERSION = 5
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -97,6 +97,13 @@ class Graph:
         n = self.node(unreal.MaterialExpressionVectorParameter, x)
         setp(n, "parameter_name", name)
         setp(n, "default_value", unreal.LinearColor(*rgba))
+        return n
+
+    def primitive_scalar(self, name, index, value=0.0, x=-1900):
+        """A scalar the component itself carries (custom primitive data): one value per placed object, not per material."""
+        n = self.scalar(name, value, x)
+        setp(n, "use_custom_primitive_data", True)
+        setp(n, "primitive_data_index", index)
         return n
 
     def const(self, value, x=-1900):
@@ -204,11 +211,11 @@ def ensure_skin_profile(rebuild=False):
         prof = asset_tools.create_asset("SSP_Mishi_Skin", MATS, unreal.SubsurfaceProfile, unreal.SubsurfaceProfileFactory())
     s = prof.get_editor_property("settings")
     for k, v in (("enable_burley", True), ("enable_mean_free_path", True),
-                 ("surface_albedo", unreal.LinearColor(0.93, 0.70, 0.62, 1.0)),
-                 ("mean_free_path_color", unreal.LinearColor(1.0, 0.25, 0.14, 1.0)),
-                 ("mean_free_path_distance", 1.1), ("world_unit_scale", 0.1),
+                 ("surface_albedo", unreal.LinearColor(0.90, 0.66, 0.58, 1.0)),
+                 ("mean_free_path_color", unreal.LinearColor(1.0, 0.30, 0.18, 1.0)),
+                 ("mean_free_path_distance", 0.55), ("world_unit_scale", 0.1),
                  ("tint", unreal.LinearColor(1.0, 1.0, 1.0, 1.0)), ("boundary_color_bleed", unreal.LinearColor(1.0, 1.0, 1.0, 1.0)),
-                 ("roughness0", 0.72), ("roughness1", 1.25), ("lobe_mix", 0.82),
+                 ("roughness0", 0.68), ("roughness1", 1.2), ("lobe_mix", 0.8),
                  ("extinction_scale", 1.0), ("normal_scale", 0.08), ("scattering_distribution", 0.93), ("ior", 1.45),
                  ("transmission_tint_color", unreal.LinearColor(1.0, 0.45, 0.35, 1.0))):
         try:
@@ -234,14 +241,15 @@ def build_skin(d, mpc, profile):
     dstrength = g.scalar("DetailStrength", 0.5)
     depth = g.node(unreal.MaterialExpressionPixelDepth, -1900)
     # the pores are for close-ups: gone by 2.5 m, where they would only shimmer
-    fade = g.custom("return Strength * saturate((250.0 - Depth) / 170.0);", [("Strength", dstrength, ""), ("Depth", depth, "")], F1,
+    fade = g.custom("return Strength * saturate((400.0 - Depth) / 250.0);", [("Strength", dstrength, ""), ("Depth", depth, "")], F1,
                     desc="detail fade", x=-1500)
     nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
     mgac = g.tex("MaskMap", d["mask"], S.SAMPLERTYPE_MASKS, (uv, ""))
     smooth = g.scalar("Smoothness", 0.85)
     occ = g.scalar("OcclusionStrength", 0.7)
-    spec = g.scalar("SpecularLevel", 0.42)
-    scatter = g.scalar("Scatter", 1.0)
+    spec = g.scalar("SpecularLevel", 0.45)
+    scatter = g.scalar("Scatter", 0.85)
+    gloss = g.scalar("GlossBoost", 1.12)
     wet_rough = g.scalar("WetRoughness", 0.2)
     flush_tint = g.vector("FlushTint", (1.0, 0.62, 0.60, 1.0))
     wet = g.collection(mpc, "Wet")
@@ -251,7 +259,7 @@ def build_skin(d, mpc, profile):
 float3 col = Base * Tint;
 float curve = Mgac.a;
 col = lerp(col, col * FlushTint, saturate(Flush * (0.35 + 0.65 * curve)));
-float rough = 1.0 - Mgac.g * Smooth;
+float rough = 1.0 - saturate(Mgac.g * Smooth * Gloss);
 rough = lerp(rough, WetRough, saturate(Wet));
 Roughness = rough;
 AO = lerp(1.0, Mgac.b, Occ);
@@ -259,7 +267,8 @@ Specular = Spec * lerp(1.0, Mgac.b, 0.5) * (1.0 + 0.6 * saturate(Wet));
 return col;
 """
     c = g.custom(code, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mgac", mgac, "RGBA"), ("Smooth", smooth, ""), ("Occ", occ, ""),
-                        ("Spec", spec, ""), ("Wet", wet, ""), ("Flush", flush, ""), ("WetRough", wet_rough, ""), ("FlushTint", flush_tint, "")],
+                        ("Spec", spec, ""), ("Wet", wet, ""), ("Flush", flush, ""), ("WetRough", wet_rough, ""), ("FlushTint", flush_tint, ""),
+                        ("Gloss", gloss, "")],
                  F3, [("Roughness", F1), ("AO", F1), ("Specular", F1)], "skin")
     g.out(c, "", "BaseColor")
     g.out(c, "Roughness", "Roughness")
@@ -349,14 +358,17 @@ def build_eye(d):
 
 
 def build_hair(d):
-    g = Graph("M_Mishi_Hair", shading=unreal.MaterialShadingModel.MSM_HAIR, blend=unreal.BlendMode.BLEND_MASKED, two_sided=True)
+    """Hair cards.  Default Lit with anisotropy along the strands rather than the Hair model: on cards the Hair model goes
+    near black wherever no light falls straight on it (the back of her head in a room lit by one window), while the game's own
+    hair is a diffuse base under two strand highlights - which is what an anisotropic highlight over a lit base gives."""
+    g = Graph("M_Mishi_Hair", blend=unreal.BlendMode.BLEND_MASKED, two_sided=True)
     setp(g.mat, "dithered_lod_transition", False)
     uv = g.uv()
     base = g.tex("BaseMap", d["white"], S.SAMPLERTYPE_COLOR, (uv, ""))
     tint = g.vector("BaseColor", (1, 1, 1, 1))
     mga = g.tex("StrandMap", d["mask"], S.SAMPLERTYPE_MASKS, (uv, ""))
     occ = g.scalar("OcclusionStrength", 0.3)
-    root = g.scalar("RootDarkening", 0.25)
+    root = g.scalar("RootDarkening", 0.2)
     col = g.custom("""
 // MGA.B: each strand's shade inside its lock; the roots (bottom of the cards' texture) a little deeper, as hair is at the scalp
 float shade = lerp(1.0, Mga.b, Occ);
@@ -364,13 +376,14 @@ float rootward = saturate((UV.y - 0.55) / 0.4);
 return Base * Tint * shade * (1.0 - Root * rootward);
 """, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mga", mga, "RGB"), ("Occ", occ, ""), ("Root", root, ""), ("UV", uv, "")], F3, desc="hair colour")
     g.out(col, "", "BaseColor")
-    g.out(g.scalar("Scatter", 0.75), "", "Metallic")          # the Hair model reads Scatter here
-    g.out(g.scalar("SpecularLevel", 0.5), "", "Specular")
+    g.out(g.scalar("SpecularLevel", 0.45), "", "Specular")
     g.out(g.scalar("Roughness", 0.42), "", "Roughness")
-    g.out(g.scalar("Backlit", 0.6), "", "ClearCoat")          # ... and Backlit here
-    # the strand direction, in tangent space: the cards' strands run up the texture (roots at the bottom), so root to tip is -V
-    direction = g.vector("StrandDirection", (0.0, -1.0, 0.0, 0.0))
-    g.out(direction, "", "Normal")
+    # the strands run up the cards' texture: the highlight is drawn out across them
+    g.out(g.scalar("Anisotropy", 0.8), "", "Anisotropy")
+    g.out(g.vector("StrandDirection", (0.0, 1.0, 0.0, 0.0)), "", "Tangent")
+    normal = g.tex("NormalMap", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
+    bump = g.scalar("BumpScale", 1.0)
+    g.out(g.custom("return normalize(float3(N.xy * Scale, N.z));", [("N", normal, "RGB"), ("Scale", bump, "")], F3, desc="strand normal"), "", "Normal")
     # soft edges: a temporal dither of the alpha (TSR resolves it); the shadow pass takes a plain cut so shadows do not crawl
     cutoff = g.scalar("Cutoff", 0.5)
     alpha_gain = g.scalar("AlphaGain", 1.35)
@@ -380,12 +393,13 @@ return Base * Tint * shade * (1.0 - Root * rootward);
 float n = InterleavedGradientNoise(Parameters.SvPosition.xy, ResolvedView.StateFrameIndexMod8);
 return A - n + 0.3333;
 """, [("A", alpha, "")], F1, desc="temporal dither", x=-700)
-    hard = g.custom("return A - Cut + 0.3333;", [("A", alpha, ""), ("Cut", cutoff, "")], F1, desc="shadow cut", x=-700)
+    core = g.scalar("ShadowCore", 0.95)
+    hard = g.custom("return (A > Cut && Mga.g >= Core) ? 1.0 : 0.0;", [("A", alpha, ""), ("Cut", cutoff, ""), ("Mga", mga, "RGB"), ("Core", core, "")],
+                    F1, desc="shadow: solid core only", x=-700)
     switch = g.node(unreal.MaterialExpressionShadowReplace, -450)
     mel.connect_material_expressions(dither, "", switch, "Default")
     mel.connect_material_expressions(hard, "", switch, "Shadow")
     g.out(switch, "", "OpacityMask")
-    g.out(g.custom("return lerp(1.0, Mga.b, 0.6);", [("Mga", mga, "RGB")], F1, desc="ao", x=-700), "", "AmbientOcclusion")
     return g.finish()
 
 
@@ -414,9 +428,13 @@ def build_tears(d):
 
 
 def build_surface(d, name, kind):
-    """Rooms and plain parts.  kind: lit / masked / glass."""
-    blend = {"lit": None, "masked": unreal.BlendMode.BLEND_MASKED, "glass": unreal.BlendMode.BLEND_TRANSLUCENT}[kind]
+    """Rooms and plain parts.  kind: lit / masked / glass.
+    Every one can fade out object by object: the camera sets LensFade (custom primitive data 0) on a post or a rail that stands
+    between the lens and the couple - a temporal dither in the view (TSR resolves it into a soft fade), while the shadow pass
+    keeps the object whole: its shadow and its bounce stay in the room."""
+    blend = {"lit": unreal.BlendMode.BLEND_MASKED, "masked": unreal.BlendMode.BLEND_MASKED, "glass": unreal.BlendMode.BLEND_TRANSLUCENT}[kind]
     g = Graph(name, blend=blend, two_sided=(kind != "lit"))
+    setp(g.mat, "dithered_lod_transition", False)
     if kind == "glass":
         setp(g.mat, "translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE_PER_PIXEL_LIGHTING)
     uv0 = g.uv()
@@ -439,12 +457,27 @@ def build_surface(d, name, kind):
     emis_col = g.vector("EmissionColor", (0, 0, 0, 1))
     emis_scale = g.scalar("EmissionScale", 1.0)
     g.out(g.custom("return E * C * K;", [("E", emis, "RGB"), ("C", emis_col, ""), ("K", emis_scale, "")], F3, desc="emission"), "", "EmissiveColor")
+    fade = g.primitive_scalar("LensFade", 0, 0.0)
+    if kind == "glass":
+        g.out(g.custom("return saturate(A * Tint) * saturate(1.0 - Fade);", [("A", base, "A"), ("Tint", tint, "A"), ("Fade", fade, "")], F1, desc="alpha"),
+              "", "Opacity")
+        g.out(g.scalar("SpecularLevel", 0.5), "", "Specular")
+        return g.finish()
     if kind == "masked":
         cut = g.scalar("Cutoff", 0.5)
-        g.out(g.custom("return A * Tint - Cut + 0.3333;", [("A", base, "A"), ("Tint", tint, "A"), ("Cut", cut, "")], F1, desc="clip"), "", "OpacityMask")
-    elif kind == "glass":
-        g.out(g.custom("return saturate(A * Tint);", [("A", base, "A"), ("Tint", tint, "A")], F1, desc="alpha"), "", "Opacity")
-        g.out(g.scalar("SpecularLevel", 0.5), "", "Specular")
+        clip = g.custom("return A * Tint - Cut + 0.3333;", [("A", base, "A"), ("Tint", tint, "A"), ("Cut", cut, "")], F1, desc="clip", x=-1100)
+    else:
+        clip = g.const(1.0, x=-1100)
+    seen = g.custom("""
+// the object's fade: each frame keeps the pixels whose noise is under what is left of it
+float keep = saturate(1.0 - Fade);
+float n = InterleavedGradientNoise(Parameters.SvPosition.xy, ResolvedView.StateFrameIndexMod8);
+return keep > n ? Clip : 0.0;
+""", [("Fade", fade, ""), ("Clip", clip, "")], F1, desc="lens fade", x=-700)
+    switch = g.node(unreal.MaterialExpressionShadowReplace, -450)
+    mel.connect_material_expressions(seen, "", switch, "Default")
+    mel.connect_material_expressions(clip, "", switch, "Shadow")
+    g.out(switch, "", "OpacityMask")
     return g.finish()
 
 
@@ -605,6 +638,7 @@ def make_instance(name, d, lookup, masters, folder):
     elif kind == "hair":
         tex("BaseMap", "_BaseMap")
         tex("StrandMap", "_OcclusionMaskMap")
+        tex("NormalMap", "_BumpMap")
         vector("BaseColor", linear_rgba(base_color))
         scalar("OcclusionStrength", f.get("_OcclusionStrength", 0.3))
         scalar("Cutoff", f.get("_Cutoff", 0.5))

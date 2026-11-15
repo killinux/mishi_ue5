@@ -1,0 +1,8 @@
+[
+  {"name": "head_+x", "phase": 0, "seconds": 2.0, "bone": "Bip001-Head", "from": [1, 0, 0], "distance": 55},
+  {"name": "head_-x", "seconds": 0.5, "bone": "Bip001-Head", "from": [-1, 0, 0], "distance": 55},
+  {"name": "head_+y", "seconds": 0.5, "bone": "Bip001-Head", "from": [0, 1, 0], "distance": 55},
+  {"name": "head_-y", "seconds": 0.5, "bone": "Bip001-Head", "from": [0, -1, 0], "distance": 55},
+  {"name": "head_+z", "seconds": 0.5, "bone": "Bip001-Head", "from": [0, 0, 1], "distance": 55},
+  {"name": "head_-z", "seconds": 0.5, "bone": "Bip001-Head", "from": [0, 0, -1], "distance": 55}
+]

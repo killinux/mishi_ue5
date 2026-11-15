@@ -87,7 +87,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
 				const int32 St = C ? C->HisStyle : 0;
 				return St == 1 ? MISHI_TEXT("\u7537\u6027\uFF1A\u526A\u5F71") : St == 2 ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u76AE\u80A4"); }),
-			[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 104.f)
+			[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 128.f)
 	];
 	Bar->AddSlot().AutoWidth().Padding(3.f)
 	[
