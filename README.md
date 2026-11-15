@@ -181,6 +181,14 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 录片时游戏没有声音设备，但把"哪一帧开始放哪个声音"写进 `timeline.json`，`tour_audio.py` 据此用 ffmpeg
 合成和游戏里一样的音轨（语音被下一句打断、部位音效循环到下一段、BGM 垫底）。
 
+成片的三个检查（系统 Python，要 numpy / Pillow；录完后 `Saved\MishiTour\<切片>\timeline.json` 还在，逐帧图已删，所以都从 mp4 里读）：
+
+```powershell
+python Tools\film_scan.py   out\a08_s01_tour.mp4 Saved\MishiTour\a08_s01\timeline.json            # 镜头前有东西挡住的帧（柱子、墙）
+python Tools\film_jitter.py out\a08_s01_tour.mp4 Saved\MishiTour\a08_s01\timeline.json [镜头名 ...]  # 帧间差：saw 大 = 有东西隔几帧跳一下
+python Tools\film_sheet.py  out\a08_s01_tour.mp4 Saved\MishiTour\a08_s01\timeline.json sheet.jpg --per-shot 3 s1_ s2_ s3_   # 某些镜头的拼版
+```
+
 ## 展示切片：伊娜丝 a08 × 战斗舞台 s01（`a08_s01`）
 
 ```powershell
