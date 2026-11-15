@@ -51,7 +51,7 @@ powershell -File Tools\ue.ps1 shots -Tag v9                # 检查图 -> Saved\
 python Tools\sheet.py Saved\MishiShots\eros15_07_v9        # 拼成 _sheet.jpg
 powershell -File Tools\ue.ps1 cpp                          # 改了 C++：存盘关编辑器 -> 编译 -> 重开编辑器
 powershell -File Tools\ue.ps1 play                         # 窗口运行，自己操作
-powershell -File Tools\ue.ps1 tour -ResX 1920 -ResY 1080   # 巡游片 -> out\eros15_07_tour.mp4（带语音、音效、BGM）
+powershell -File Tools\ue.ps1 tour -ResX 1920 -ResY 1080   # 巡游片 -> out\eros15_07_tour.mp4（带语音、音效、BGM）；加 -KeepFrames 保留逐帧 BMP（约 16 GB）
 ```
 
 导入步骤：`textures audio bodies room materials level`（不写 = 全部；`--force` 重导）。改了 `mishi_look.py` 的 `LOOK`
@@ -175,6 +175,9 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 - 编辑器在后台时 `take_high_res_screenshot` 不出图：检查图一律走 `-game` 进程。
 - 检查图要等相机读到轨道参数（`IsSetUp`）再开拍，否则第一个机位是默认值。
 - 1920×1080 的窗口在这台笔记本上会被系统缩成奇数尺寸（x264 拒收）：录片用 `-RenderOffscreen`。
+- 录片逐帧存 PNG 时每帧 0.4 秒都花在压缩上（66 秒的片子录 13 分钟）：逐帧存 BMP，编码完删掉。
+- 骨骼网格的包围盒是站姿的：角色躺下后头在盒外，脸部特写时**整个身体被视锥剔除**（人突然消失）。
+  两具身体的 `BoundsScale` 设成 6。
 - 灯光强度 / 曝光怎么改都不变的"高光"多半不是高光：这次鼻梁上的白斑是太阳直射的漫反射。
   用 `ShowFlag.Specular 0`、`ShowFlag.DirectLighting 0` 这类开关一次跑一组对照最快。
 - 写文件工具会把内容里的 `\uXXXX` 变成字符；bash heredoc 会吃反斜杠。带反斜杠的脚本用写文件工具写。

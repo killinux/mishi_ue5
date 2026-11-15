@@ -14,7 +14,8 @@ param(
     [string]$Shots = '',
     [string]$Tag = '',
     [int]$ResX = 1600,
-    [int]$ResY = 900
+    [int]$ResY = 900,
+    [switch]$KeepFrames
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -123,7 +124,7 @@ switch ($Do) {
         $out = Join-Path $Root 'out'
         New-Item -ItemType Directory -Force $out | Out-Null
         $mp4 = Join-Path $out "${Slice}_tour$(if ($Tag) { '_' + $Tag }).mp4"
-        $pattern = Join-Path $frames 'frame_%05d.png'
+        $pattern = Join-Path $frames 'frame_%05d.bmp'
         $track = Join-Path $frames 'tour.m4a'
         & python (Join-Path $Root 'Tools\tour_audio.py') --frames $frames --slice (Join-Path $Root "Import\$Slice") --out $track --ffmpeg $Ffmpeg
         if ($LASTEXITCODE -eq 0 -and (Test-Path $track)) {
@@ -131,7 +132,10 @@ switch ($Do) {
         } else {
             & $Ffmpeg -y -loglevel error -framerate 30 -i $pattern -c:v libx264 -pix_fmt yuv420p -crf 16 -preset slow -movflags +faststart $mp4
         }
-        Write-Host "tour -> $mp4 ($((Get-ChildItem $frames -Filter *.png).Count) frames)"
+        $count = (Get-ChildItem $frames -Filter 'frame_*.bmp').Count
+        Write-Host "tour -> $mp4 ($count frames)"
+        # the frames are 8 MB each (uncompressed): gone once the film is there, unless -KeepFrames
+        if (-not $KeepFrames -and (Test-Path $mp4) -and (Get-Item $mp4).Length -gt 0) { Remove-Item (Join-Path $frames 'frame_*.bmp') -Force }
         exit $code
     }
     'shots' {

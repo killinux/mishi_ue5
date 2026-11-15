@@ -38,7 +38,7 @@ private:
 
 	// -MishiShots=<file.json> -MishiShotsDir=<dir>: look-dev stills.  Each shot presses a phase button (or none), sets a view - round
 	// the rig's target or round a bone of hers - lets the scene run for some seconds and saves one frame <dir>/<name>.png; then quit.
-	// With -MishiTour every frame of every shot is saved instead (<dir>/frame_00000.png ...): the same list is a film, cut by cut
+	// With -MishiTour every frame of every shot is saved instead (<dir>/frame_00000.bmp ...): the same list is a film, cut by cut
 	// (Tools/ue.ps1 tour runs it with -benchmark -fps=30, so 30 frames are a second of the scene).
 	struct FShot
 	{

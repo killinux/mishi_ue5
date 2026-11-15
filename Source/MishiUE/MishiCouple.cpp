@@ -29,6 +29,9 @@ AMishiCouple::AMishiCouple()
 		Body->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Body->bEnableUpdateRateOptimizations = false;
+		// the mesh's bounds are those of its standing pose: lying down, the head is outside them, and a close-up of the face
+		// culled the whole body.  Wide bounds: two bodies in one room are never worth culling.
+		Body->BoundsScale = 6.f;
 		// the bodies are lit on channel 1 only: the room's hard sun (channel 0) does not burn the skin out - a weaker twin of it
 		// on channel 1 does the sun on skin (Tools/mishi_look.py puts every other light on both channels)
 		Body->LightingChannels.bChannel0 = false;
