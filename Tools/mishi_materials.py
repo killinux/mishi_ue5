@@ -22,7 +22,7 @@ import os
 
 import unreal
 
-VERSION = 6
+VERSION = 9
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -483,6 +483,76 @@ return keep > n ? Clip : 0.0;
     return g.finish()
 
 
+# How a battle outfit's metal is shown (the instances' MetalBoost / MetalRoughness / MetalCavity).  The a08 maps where the mask
+# says metal: albedo (0.31, 0.21, 0.11) on the body sheet and (0.48, 0.36, 0.19) on the armour sheet - gold is (1.0, 0.77, 0.34) -
+# and a gloss of 0.3 .. 0.7 (median 0.5).
+ARMOR_LOOK = {
+    "metal_boost": 1.7,
+    "metal_roughness": 0.7,
+    "metal_cavity": 0.35,
+    "metal_saturation": 1.25,
+}
+
+
+def build_armor(d):
+    """A battle outfit: armour, cloth, chains and the weapon on the game's own maps (4096 px on the body) - albedo, normal, and
+    the mask map's metal (R), gloss (G), occlusion (B).  Metal is what the mask says, so the gold answers the sky and the room
+    through the reflections; cut-outs (chain links) by the albedo's alpha; two-sided (cloth seen from inside, and rays from behind)."""
+    g = Graph("M_Mishi_Armor", blend=unreal.BlendMode.BLEND_MASKED, two_sided=True)
+    setp(g.mat, "dithered_lod_transition", False)
+    uv = g.uv()
+    base = g.tex("BaseMap", d["white"], S.SAMPLERTYPE_COLOR, (uv, ""))
+    tint = g.vector("BaseColor", (1, 1, 1, 1))
+    normal = g.tex("NormalMap", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
+    bump = g.scalar("BumpScale", 1.0)
+    mga = g.tex("MaskMap", d["mask"], S.SAMPLERTYPE_MASKS, (uv, ""))
+    metal = g.scalar("Metallic", 1.0)
+    smooth = g.scalar("Smoothness", 1.0)
+    occ = g.scalar("OcclusionStrength", 1.0)
+    boost = g.scalar("MetalBoost", 1.0)                 # x the base colour of the metal parts (ARMOR_LOOK; 1 = the game's paint)
+    metal_rough = g.scalar("MetalRoughness", 1.0)       # x the roughness of the metal parts (1 = the game's gloss map as it is)
+    cavity = g.scalar("MetalCavity", 0.0)               # how far the occlusion map darkens the metal in its creases
+    metal_sat = g.scalar("MetalSaturation", 1.0)        # x the saturation of the lifted metal colour
+    min_rough = g.scalar("MinRoughness", 0.08)
+    spec = g.scalar("SpecularLevel", 0.5)
+    code = """
+// the mask map: R metal, G gloss, B occlusion.  Roughness from the gloss; the metal parts can be polished further
+float m = saturate(Mga.r * Metal);
+float rough = (1.0 - saturate(Mga.g * Smooth)) * lerp(1.0, MetalRough, m);
+Roughness = max(rough, MinRough);
+Metallic = m;
+AO = lerp(1.0, Mga.b, Occ);
+// occlusion also dims the reflection in the creases (the game's specular occlusion): a lining would mirror the sky otherwise
+Specular = Spec * lerp(1.0, Mga.b, 0.7 * Occ);
+float3 c = Base * Tint;
+// The game paints its gold at a third of what gold gives back (its shader adds a Fresnel term on top).  A metal's base colour
+// is its mirror colour: that paint is a dull bronze.  Lifted towards the metal (the hue kept: scaled down as a whole where a
+// channel would pass 1); a metal has no diffuse for the occlusion to dim, so the creases are darkened in the colour itself.
+float3 lifted = c * Boost;
+lifted /= max(1.0, max(lifted.r, max(lifted.g, lifted.b)));
+// (a mirror of a blue sky: a pale gold goes grey-green under it, a deeper one stays gold)
+lifted = max(lerp(dot(lifted, float3(0.2126, 0.7152, 0.0722)).xxx, lifted, Sat), 0.0);
+lifted *= lerp(1.0, Mga.b, Cavity * Occ);
+return lerp(c, lifted, m);
+"""
+    c = g.custom(code, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mga", mga, "RGB"), ("Metal", metal, ""), ("Smooth", smooth, ""),
+                        ("Occ", occ, ""), ("Boost", boost, ""), ("MetalRough", metal_rough, ""), ("Cavity", cavity, ""),
+                        ("Sat", metal_sat, ""), ("MinRough", min_rough, ""), ("Spec", spec, "")],
+                 F3, [("Roughness", F1), ("Metallic", F1), ("AO", F1), ("Specular", F1)], "armour")
+    g.out(c, "", "BaseColor")
+    g.out(c, "Roughness", "Roughness")
+    g.out(c, "Metallic", "Metallic")
+    g.out(c, "AO", "AmbientOcclusion")
+    g.out(c, "Specular", "Specular")
+    g.out(g.custom("return normalize(float3(N.xy * Scale, N.z));", [("N", normal, "RGB"), ("Scale", bump, "")], F3, desc="bump scale"), "", "Normal")
+    emis = g.tex("EmissionMap", d["black"], S.SAMPLERTYPE_COLOR, (uv, ""))
+    emis_col = g.vector("EmissionColor", (0, 0, 0, 1))
+    g.out(g.custom("return E * C;", [("E", emis, "RGB"), ("C", emis_col, "")], F3, desc="emission"), "", "EmissiveColor")
+    cut = g.scalar("Cutoff", 0.5)
+    g.out(g.custom("return A * Tint - Cut + 0.3333;", [("A", base, "A"), ("Tint", tint, "A"), ("Cut", cut, "")], F1, desc="clip"), "", "OpacityMask")
+    return g.finish()
+
+
 def build_flat(d):
     g = Graph("M_Mishi_Flat", shading=unreal.MaterialShadingModel.MSM_UNLIT)
     tint = g.vector("BaseColor", (1, 1, 1, 1))
@@ -497,7 +567,7 @@ def build_hidden(d):
     return g.finish()
 
 
-MASTERS = ("M_Mishi_Skin", "M_Mishi_Eye", "M_Mishi_Hair", "M_Mishi_Lash", "M_Mishi_Tears", "M_Mishi_Lit", "M_Mishi_Masked",
+MASTERS = ("M_Mishi_Skin", "M_Mishi_Eye", "M_Mishi_Hair", "M_Mishi_Lash", "M_Mishi_Tears", "M_Mishi_Armor", "M_Mishi_Lit", "M_Mishi_Masked",
            "M_Mishi_Glass", "M_Mishi_Flat", "M_Mishi_Hidden")
 
 
@@ -522,6 +592,7 @@ def build_masters(defaults, force=False):
         build_hair(defaults)
         build_lash(defaults)
         build_tears(defaults)
+        build_armor(defaults)
         build_surface(defaults, "M_Mishi_Lit", "lit")
         build_surface(defaults, "M_Mishi_Masked", "masked")
         build_surface(defaults, "M_Mishi_Glass", "glass")
@@ -538,6 +609,7 @@ def build_masters(defaults, force=False):
 
 # ---------------------------------------------------------------------------------------------------------------- instances
 KIND_MASTER = {"skin": "M_Mishi_Skin", "eye": "M_Mishi_Eye", "hair": "M_Mishi_Hair", "lash": "M_Mishi_Lash", "tears": "M_Mishi_Tears",
+               "armor": "M_Mishi_Armor",
                "lit": "M_Mishi_Lit", "masked": "M_Mishi_Masked", "glass": "M_Mishi_Glass", "flat": "M_Mishi_Flat", "hidden": "M_Mishi_Hidden"}
 EYE_SCALARS = ("IrisLimbusScaleInv", "PupilMinSizeInv", "PupilMaxSizeInv", "PupilSizeScale", "LimbusPivot", "LimbusPivotWidth",
                "LimbusFadeRatio", "LimbusSizeIris", "LimbusSizeSclera", "IrisParallax", "ScleraSizeInv", "IrisOcclusionAmt",
@@ -559,8 +631,9 @@ def classify(name, d):
     tex = d.get("textures", {})
     fl = d.get("floats", {})
     shader = d.get("shader", "")
-    if "Particles" in shader or low.startswith("fx_") or "decal" in low or "semen" in low or "liquid" in low or "particle" in low:
-        return "hidden"                      # the Effect layer is not in the FBX; its liquids come later
+    if ("Particles" in shader or low.startswith("fx_") or "semen" in low or "liquid" in low or "particle" in low
+            or ("decal" in low and d.get("who") != "room")):
+        return "hidden"                      # the Effect layer is not in the FBX; its liquids come later (a stage's decals are its flags and dirt)
     if "tears" in low:
         return "tears"
     if "_IrisAlbedoTex" in tex or shader == "ROE/Eye":
@@ -573,6 +646,9 @@ def classify(name, d):
         return "skin"
     if "silhouette" in low or shader.endswith("/Unlit"):
         return "flat"
+    # a character's outfit or weapon (the game's Pinkcore character shader with its mask map), not a room's surface
+    if d.get("source", "").startswith("game") and ("PINKCORE_MGA" in d.get("keywords", []) or low.startswith("wp_")):
+        return "armor"
     if d.get("transparent", fl.get("_Surface", 0) > 0.5):
         return "glass"
     if d.get("alpha_clip", fl.get("_AlphaClip", 0) > 0.5 or fl.get("_EnableAlphaTest", 0) > 0.5):
@@ -649,6 +725,26 @@ def make_instance(name, d, lookup, masters, folder):
         vector("BaseColor", linear_rgba(base_color))
     elif kind == "flat":
         vector("BaseColor", linear_rgba(base_color))
+    elif kind == "armor":
+        tex("BaseMap", "_BaseMap", "_MainTex")
+        tex("NormalMap", "_BumpMap")
+        tex("MaskMap", "_MetallicGlossMap")
+        vector("BaseColor", linear_rgba(base_color))
+        scalar("Metallic", f.get("_Metallic", 1.0))
+        scalar("Smoothness", f.get("_Smoothness", 1.0))
+        scalar("OcclusionStrength", f.get("_OcclusionStrength", 1.0))
+        scalar("BumpScale", f.get("_BumpScale", 1.0))
+        scalar("MetalBoost", ARMOR_LOOK["metal_boost"])
+        scalar("MetalRoughness", ARMOR_LOOK["metal_roughness"])
+        scalar("MetalCavity", ARMOR_LOOK["metal_cavity"])
+        scalar("MetalSaturation", ARMOR_LOOK["metal_saturation"])
+        # no cut where the game does not test the alpha
+        scalar("Cutoff", f.get("_Cutoff", 0.5) if f.get("_EnableAlphaTest", 0.0) > 0.5 or "_ALPHATEST_ON" in d.get("keywords", []) else 0.0)
+        e = c.get("_EmissionColor", [0, 0, 0, 1])
+        if max(e[:3]) > 0.0 and f.get("_EnableEmission", 1.0) > 0.5:
+            if not tex("EmissionMap", "_EmissionMap"):
+                mel.set_material_instance_texture_parameter_value(mi, "EmissionMap", masters["_white"])
+            vector("EmissionColor", (e[0], e[1], e[2], 1.0))
     elif kind in ("lit", "masked", "glass"):
         tex("BaseMap", "_BaseMap", "_MainTex")
         tex("NormalMap", "_BumpMap")

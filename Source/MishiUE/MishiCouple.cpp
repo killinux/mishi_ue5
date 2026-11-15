@@ -5,6 +5,7 @@
 #include "Components/AudioComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialParameterCollection.h"
@@ -71,6 +72,8 @@ void AMishiCouple::PlaceBodies()
 		Her->SetSkeletalMeshAsset(HerMesh);
 	if (HisMesh && His->GetSkeletalMeshAsset() != HisMesh)
 		His->SetSkeletalMeshAsset(HisMesh);
+	if (!HisMesh || !Data.bMale)
+		HisStyle = 2;                           // a scene without him
 	Her->SetRelativeTransform(Data.FemaleOffset.ToUE());
 	His->SetRelativeTransform(Data.MaleOffset.ToUE());
 	SetHisStyle(HisStyle);
@@ -117,10 +120,14 @@ void AMishiCouple::BeginPlay()
 	if (!bReady)
 		return;
 	PlaceBodies();
+	HomeXform = GetActorTransform();
+	bHome = true;
+	if (Data.Kind != TEXT("eros"))
+		bSkinState = false;                     // blush and sweat follow the eros mode's four phases; a showcase's phases are buttons
 	// the bodies' poses after this actor's tick, which sets their clips and times
 	Her->AddTickPrerequisiteActor(this);
 	His->AddTickPrerequisiteActor(this);
-	if (!Player(Her) || !Player(His))
+	if (!Player(Her) || (HisMesh && Data.bMale && !Player(His)))
 		UE_LOG(LogMishi, Error, TEXT("%s: the bodies have no MishiAnimInstance"), *GetName());
 	if (USoundBase* Bgm = FindSound(Data.MusicFile))
 	{
@@ -200,9 +207,16 @@ void AMishiCouple::Enter(const FString& PartName, float Blend)
 	}
 	PartIndex = Index;
 	PartTime = 0.f;
+	CueIndex = 0;
+	// a part cut short (another button in the middle of a skill): the unit goes back to its place, the game's camera lets go
+	if (bHome && !(bMoving ? MoveTo : GetActorLocation()).Equals(HomeXform.GetLocation(), 1.0))
+		StartMove(HomeXform.GetLocation(), 0.2f);
+	OnCamera.Broadcast(0.f, 0.f, FVector::ZeroVector, FQuat::Identity);
 	const FMishiPart& P = Data.Parts[Index];
 	if (P.Phase >= 0)
 		PhaseNow = P.Phase;
+	if (P.bLoop)
+		ResetAutoTimer();                       // a one-shot came back to its loop: the auto mode stays the loop's own time
 	if (UMishiAnimInstance* A = Player(Her))
 		A->Play(FindClip(HerClips, P.FemaleClip), P.bLoop, Blend);
 	if (UMishiAnimInstance* A = Player(His))
@@ -225,6 +239,60 @@ void AMishiCouple::Seek(float Seconds)
 	if (UMishiAnimInstance* A = Player(His))
 		A->Advance(PartTime);
 	ApplyShapes();
+	SkipCues();
+}
+
+FVector AMishiCouple::MoveGoal(const FMishiCue& C) const
+{
+	// "attack": up to Radius metres in front of the one she fights; anything else: back to her place
+	if (C.Move != TEXT("attack"))
+		return HomeXform.GetLocation();
+	const double Far = Data.Target.Size();
+	const FVector AtU = Far > C.Radius ? Data.Target * ((Far - C.Radius) / Far) : FVector::ZeroVector;
+	return HomeXform.TransformPosition(MishiSpace::Position(AtU));
+}
+
+void AMishiCouple::StartMove(const FVector& To, float Seconds)
+{
+	MoveFrom = GetActorLocation();
+	MoveTo = To;
+	MoveClock = 0.f;
+	MoveSeconds = FMath::Max(Seconds, 0.01f);
+	bMoving = true;
+}
+
+void AMishiCouple::StepMove(float DeltaSeconds)
+{
+	if (!bMoving)
+		return;
+	MoveClock += DeltaSeconds;
+	const float A = FMath::Clamp(MoveClock / MoveSeconds, 0.f, 1.f);
+	SetActorLocation(FMath::Lerp(MoveFrom, MoveTo, A));
+	bMoving = A < 1.f;
+}
+
+void AMishiCouple::SkipCues()
+{
+	// a seek: what the timeline did before this moment has happened - the unit stands where its moves took it, the game's
+	// camera runs if this is inside its time; the sounds are over
+	const FMishiPart* P = PartNow();
+	const TArray<FMishiCue>* List = P ? Data.Cues.Find(P->Name) : nullptr;
+	bMoving = false;
+	if (bHome)
+		SetActorLocation(HomeXform.GetLocation());
+	if (!List)
+		return;
+	while (CueIndex < List->Num() && (*List)[CueIndex].Time <= PartTime)
+	{
+		const FMishiCue& C = (*List)[CueIndex++];
+		if (C.Kind == 4 && bHome)
+		{
+			StartMove(MoveGoal(C), C.Duration);
+			StepMove(PartTime - C.Time);
+		}
+		else if (C.Kind == 5 && PartTime < C.Time + C.Duration)
+			OnCamera.Broadcast(C.Time + C.Duration - PartTime, C.Fov, C.Pos, C.Rot);
+	}
 }
 
 void AMishiCouple::SetShowHim(bool bShow)
@@ -304,12 +372,13 @@ void AMishiCouple::ApplyShapes()
 
 FVector AMishiCouple::UnityToWorld(const FVector& P) const
 {
-	return GetActorTransform().TransformPosition(MishiSpace::Position(P));
+	// (from where the couple was placed: the camera's orbit does not jump with a unit's dash)
+	return Home().TransformPosition(MishiSpace::Position(P));
 }
 
 FVector AMishiCouple::UnityDirToWorld(const FVector& D) const
 {
-	return GetActorTransform().TransformVectorNoScale(MishiSpace::Direction(D));
+	return Home().TransformVectorNoScale(MishiSpace::Direction(D));
 }
 
 void AMishiCouple::Tick(float DeltaSeconds)
@@ -336,18 +405,73 @@ void AMishiCouple::Tick(float DeltaSeconds)
 	if (P->bLoop && PartTime >= Length)
 	{
 		PartTime = FMath::Fmod(PartTime, Length);
+		CueIndex = 0;
 		PlayVoice(P->Name);                   // a loop's line again with the loop
 	}
+	FireCues();
+	StepMove(Dt);
 	ApplyShapes();
 	if (!P->bLoop && !P->Next.IsEmpty() && PartTime >= Length * P->ExitTime)
 	{
 		Enter(P->Next, P->Blend);
 		return;
 	}
-	if (bAuto && P->bLoop && P->Phase >= 0 && P->Phase < Data.Phases.Num() - 1)
+	if (Data.Auto.Num() > 0)
+	{
+		// a showcase: the auto mode goes round the slice's list of buttons, staying in each loop its own time
+		if (bAuto && P->bLoop)
+		{
+			AutoTimer -= DeltaSeconds;
+			if (AutoTimer <= 0.f)
+			{
+				AutoIndex = (AutoIndex + 1) % Data.Auto.Num();
+				GoPhase(Data.Auto[AutoIndex]);
+			}
+		}
+	}
+	else if (bAuto && P->bLoop && P->Phase >= 0 && P->Phase < Data.Phases.Num() - 1)
 	{
 		AutoTimer -= DeltaSeconds;
 		if (AutoTimer <= 0.f)
 			GoPhase(P->Phase + 1);
+	}
+}
+
+void AMishiCouple::FireCues()
+{
+	const FMishiPart* P = PartNow();
+	const TArray<FMishiCue>* List = P ? Data.Cues.Find(P->Name) : nullptr;
+	if (!List)
+		return;
+	while (CueIndex < List->Num() && (*List)[CueIndex].Time <= PartTime)
+	{
+		const FMishiCue& C = (*List)[CueIndex++];
+		if (C.Kind == 0)
+		{
+			USoundBase* S = bSfx ? FindSound(C.File) : nullptr;
+			if (S)
+			{
+				UGameplayStatics::PlaySound2D(this, S, C.Volume * SfxVolume);
+				OnSound.Broadcast(TEXT("shot"), C.File, C.Volume * SfxVolume);      // plays to its end, whatever follows
+			}
+		}
+		else if (C.Kind == 1 && VoiceLanguage != 0)
+		{
+			const FString& File = VoiceLanguage == 1 ? (C.Jp.IsEmpty() ? C.En : C.Jp) : (C.En.IsEmpty() ? C.Jp : C.En);
+			if (USoundBase* S = FindSound(File))
+			{
+				Voice->Stop();
+				Voice->SetSound(S);
+				Voice->SetVolumeMultiplier(C.Volume);
+				Voice->Play();
+				OnSound.Broadcast(TEXT("voice"), File, C.Volume);
+			}
+		}
+		else if (C.Kind == 2)
+			OnShake.Broadcast(C.Amplitude, C.Duration, C.Frequency);
+		else if (C.Kind == 4 && bHome)
+			StartMove(MoveGoal(C), C.Duration);       // the unit's own way across the stage
+		else if (C.Kind == 5)
+			OnCamera.Broadcast(C.Duration, C.Fov, C.Pos, C.Rot);
 	}
 }

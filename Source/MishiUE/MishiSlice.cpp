@@ -146,6 +146,9 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 		OutError = FString::Printf(TEXT("slice.json does not parse: %s"), *Reader->GetErrorMessage());
 		return false;
 	}
+	Kind = Str(Root, TEXT("kind"));
+	if (Kind.IsEmpty())
+		Kind = TEXT("eros");
 	Posture = Str(Root, TEXT("posture"));
 	Title = Str(Root, TEXT("title"));
 	Outfit = Str(Root, TEXT("outfit"));
@@ -156,6 +159,40 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 	MaleRoot = Str(Male, TEXT("root"));
 	FemaleOffset = Xform(Obj(Female, TEXT("offset")));
 	MaleOffset = Xform(Obj(Male, TEXT("offset")));
+	bMale = Bool(Male, TEXT("ok"), true);
+	Auto = Ints(Root, TEXT("auto"));
+	Cues.Reset();
+	if (const FObj AllCues = Obj(Root, TEXT("cues")))
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Kv : AllCues->Values)
+		{
+			if (!Kv.Value.IsValid() || Kv.Value->Type != EJson::Array)
+				continue;
+			TArray<FMishiCue>& List = Cues.Add(Kv.Key);
+			for (const TSharedPtr<FJsonValue>& V : Kv.Value->AsArray())
+			{
+				if (!V.IsValid() || V->Type != EJson::Object)
+					continue;
+				const FObj O = V->AsObject();
+				FMishiCue& C = List.AddDefaulted_GetRef();
+				const FString K = Str(O, TEXT("kind"));
+				C.Kind = K == TEXT("sfx") ? 0 : K == TEXT("voice") ? 1 : K == TEXT("shake") ? 2 : K == TEXT("move") ? 4 : K == TEXT("camera") ? 5 : 3;
+				C.Move = Str(O, TEXT("move"));
+				C.Radius = Num(O, TEXT("radius"), 1.f);
+				C.Fov = Num(O, TEXT("fov"), 40.f);
+				C.Pos = Vec(O, TEXT("position"));
+				C.Rot = Quat(O, TEXT("rotation"));
+				C.Time = Num(O, TEXT("time"));
+				C.File = Str(O, TEXT("file"));
+				C.Jp = Str(O, TEXT("jp"));
+				C.En = Str(O, TEXT("en"));
+				C.Volume = Num(O, TEXT("volume"), 1.f);
+				C.Duration = Num(O, TEXT("duration"), 0.5f);
+				C.Amplitude = Num(O, TEXT("amplitude"), 0.5f);
+				C.Frequency = Num(O, TEXT("frequency"), 0.f);
+			}
+			List.StableSort([](const FMishiCue& A, const FMishiCue& B) { return A.Time < B.Time; });
+		}
+	Target = Vec(Root, TEXT("target"), FVector(0.0, 0.0, 6.0));
 	Anchor = Xform(Obj(Root, TEXT("anchor")));
 	PostureAnchor = Xform(Obj(Root, TEXT("posture_anchor")));
 
@@ -178,6 +215,7 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 	{
 		FMishiPhase& P = Phases.AddDefaulted_GetRef();
 		P.Trigger = Str(O, TEXT("trigger"));
+		P.Label = Str(O, TEXT("label"));
 		const FVector2D T = Vec2(O, TEXT("timer"), FVector2D(10, 15));
 		P.TimerMin = T.X;
 		P.TimerMax = T.Y;

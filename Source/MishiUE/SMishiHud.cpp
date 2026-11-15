@@ -57,14 +57,34 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	SetVisibility(EVisibility::SelfHitTestInvisible);
 
 	TSharedRef<SHorizontalBox> Bar = SNew(SHorizontalBox);
-	for (int32 I = 0; I < 4; ++I)
-		Bar->AddSlot().AutoWidth().Padding(3.f)
-		[
-			// "jie duan N"
-			Button(FText::Format(MISHI_TEXT("\u9636\u6BB5 {0}"), FText::AsNumber(I + 1)),
+	// a button per phase of the slice (the eros mode's four, a showcase's actions under their own names): those the slice has
+	for (int32 I = 0; I < 10; ++I)
+	{
+		TSharedRef<SWidget> B =
+			// "jie duan N" unless the slice names it
+			Button(TAttribute<FText>::CreateLambda([this, I]()
+				{
+					const AMishiCouple* C = Couple();
+					if (C && C->IsReady() && C->Slice().Phases.IsValidIndex(I) && !C->Slice().Phases[I].Label.IsEmpty())
+						return FText::FromString(C->Slice().Phases[I].Label);
+					return FText::Format(MISHI_TEXT("\u9636\u6BB5 {0}"), FText::AsNumber(I + 1));
+				}),
 				[this, I]() { if (AMishiCouple* C = Couple()) C->GoPhase(I); },
-				[this, I]() { const AMishiCouple* C = Couple(); return C && C->CurrentPhase() == I; })
-		];
+				[this, I]() { const AMishiCouple* C = Couple(); return C && C->CurrentPhase() == I; });
+		B->SetVisibility(TAttribute<EVisibility>::CreateLambda([this, I]()
+		{
+			const AMishiCouple* C = Couple();
+			const int32 N = C && C->IsReady() ? C->Slice().Phases.Num() : 4;
+			return I < N ? EVisibility::Visible : EVisibility::Collapsed;
+		}));
+		Bar->AddSlot().AutoWidth().Padding(3.f)[B];
+	}
+	// what only a couple's scene has: him, the blush
+	const TAttribute<EVisibility> CoupleOnly = TAttribute<EVisibility>::CreateLambda([this]()
+	{
+		const AMishiCouple* C = Couple();
+		return !C || !C->IsReady() || C->Slice().bMale ? EVisibility::Visible : EVisibility::Collapsed;
+	});
 	Bar->AddSlot().AutoWidth().Padding(FMargin(14.f, 3.f, 3.f, 3.f))
 	[
 		// "zi dong: kai / guan"
@@ -83,11 +103,14 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	];
 	Bar->AddSlot().AutoWidth().Padding(3.f)
 	[
-		// "nan xing: pi fu / jian ying / yin cang" - his skin, the game's flat silhouette, hidden
-		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
-				const int32 St = C ? C->HisStyle : 0;
-				return St == 1 ? MISHI_TEXT("\u7537\u6027\uFF1A\u526A\u5F71") : St == 2 ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u76AE\u80A4"); }),
-			[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 128.f)
+		SNew(SBox).Visibility(CoupleOnly)
+		[
+			// "nan xing: pi fu / jian ying / yin cang" - his skin, the game's flat silhouette, hidden
+			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+					const int32 St = C ? C->HisStyle : 0;
+					return St == 1 ? MISHI_TEXT("\u7537\u6027\uFF1A\u526A\u5F71") : St == 2 ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u76AE\u80A4"); }),
+				[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 128.f)
+		]
 	];
 	Bar->AddSlot().AutoWidth().Padding(3.f)
 	[
@@ -98,10 +121,30 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	];
 	Bar->AddSlot().AutoWidth().Padding(3.f)
 	[
-		// "chao hong" - sweat and blush following the phase
-		Button(MISHI_TEXT("\u6F6E\u7EA2"),
-			[this]() { if (AMishiCouple* C = Couple()) C->bSkinState = !C->bSkinState; },
-			[this]() { const AMishiCouple* C = Couple(); return C && C->bSkinState; }, 64.f)
+		SNew(SBox).Visibility(CoupleOnly)
+		[
+			// "chao hong" - sweat and blush following the phase
+			Button(MISHI_TEXT("\u6F6E\u7EA2"),
+				[this]() { if (AMishiCouple* C = Couple()) C->bSkinState = !C->bSkinState; },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->bSkinState; }, 64.f)
+		]
+	];
+	// what only a showcase has: the game's own camera for the skills
+	const TAttribute<EVisibility> ShowcaseOnly = TAttribute<EVisibility>::CreateLambda([this]()
+	{
+		const AMishiCouple* C = Couple();
+		return C && C->IsReady() && C->Slice().Kind == TEXT("showcase") ? EVisibility::Visible : EVisibility::Collapsed;
+	});
+	Bar->AddSlot().AutoWidth().Padding(3.f)
+	[
+		SNew(SBox).Visibility(ShowcaseOnly)
+		[
+			// "ji neng jing tou: kai / guan" - a skill seen through the game's own camera, or the orbit kept
+			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCameraPawn* P = Cam();
+					return P && P->bSkillCamera ? MISHI_TEXT("技能镜头：开") : MISHI_TEXT("技能镜头：关"); }),
+				[this]() { if (AMishiCameraPawn* P = Cam()) P->bSkillCamera = !P->bSkillCamera; },
+				[this]() { const AMishiCameraPawn* P = Cam(); return P && P->bSkillCamera; }, 128.f)
+		]
 	];
 	// camera presets: "quan jing", "zheng mian", "ce mian", "fu shi", "te xie", "fu wei"
 	struct FPreset { const TCHAR* Label; int32 Kind; };

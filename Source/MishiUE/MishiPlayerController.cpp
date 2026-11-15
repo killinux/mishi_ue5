@@ -81,6 +81,7 @@ void AMishiPlayerController::StartShots(const FString& File)
 		O->TryGetStringField(TEXT("bone"), S.Bone);
 		O->TryGetBoolField(TEXT("hud"), S.bHud);
 		O->TryGetBoolField(TEXT("hide_him"), S.bHideHim);
+		O->TryGetBoolField(TEXT("skill_cam"), S.bSkillCam);
 		const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
 		if (O->TryGetArrayField(TEXT("offset"), Off) && Off && Off->Num() >= 3)
 			S.BoneOffset = FVector((*Off)[0]->AsNumber(), (*Off)[1]->AsNumber(), (*Off)[2]->AsNumber());
@@ -185,6 +186,7 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 		const FShot& S = Shots[ShotIndex];
 		UE_LOG(LogMishi, Log, TEXT("shot %d %s"), ShotIndex, *S.Name);       // the log's time stamps tell how long each one took
 		ShotFrames.Add(RecordFrame);
+		Cam->bSkillCamera = S.bSkillCam;
 		if (S.Phase >= 0)
 			C->GoPhase(S.Phase);
 		if (S.At >= 0.f)
@@ -383,8 +385,9 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 	}
 	if (C)
 	{
-		const FKey Phases[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four};
-		for (int32 I = 0; I < 4; ++I)
+		const FKey Phases[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight,
+			EKeys::Nine, EKeys::Zero};
+		for (int32 I = 0; I < UE_ARRAY_COUNT(Phases) && I < C->Slice().Phases.Num(); ++I)
 			if (WasInputKeyJustPressed(Phases[I]))
 				C->GoPhase(I);
 		if (WasInputKeyJustPressed(EKeys::SpaceBar)) C->bAuto = !C->bAuto;

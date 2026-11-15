@@ -8,6 +8,7 @@
 #   powershell -File Tools\ue.ps1 shots  [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (look-dev stills -> Saved\MishiShots\<slice>_<tag>)
 #   powershell -File Tools\ue.ps1 stills [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (path-traced stills: Tools\shots_stills.json -> out\stills\<slice>, 2560x1440 offscreen)
 #   powershell -File Tools\ue.ps1 editor
+# Without -Shots, a slice's own list is used when there is one: Tools\tour_<slice>.json, shots_<slice>.json, stills_<slice>.json.
 param(
     [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'stills', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
@@ -22,6 +23,16 @@ $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Project = Join-Path $Root 'MishiUE.uproject'
 $Ffmpeg = 'D:\Program Files\ffmpeg\bin\ffmpeg.exe'
+# the game reads the shots file from its own working folder (the engine's): a full path, from here or from the project
+if ($Shots -and -not [IO.Path]::IsPathRooted($Shots)) {
+    $Shots = if (Test-Path $Shots) { (Resolve-Path $Shots).Path } else { Join-Path $Root $Shots }
+}
+# a slice's own shot list (Tools\tour_<slice>.json, stills_<slice>.json, shots_<slice>.json) before the eros slice's
+function Get-ShotList([string]$kind, [string]$fallback) {
+    $own = Join-Path $Root "Tools\${kind}_$Slice.json"
+    if (Test-Path $own) { return $own }
+    return (Join-Path $Root "Tools\$fallback")
+}
 
 function Get-EngineVersion([string]$dir) {
     $bv = Join-Path $dir 'Engine\Build\Build.version'
@@ -122,7 +133,7 @@ switch ($Do) {
     'tour' {
         # the film: Tools\tour.json (or -Shots <file>), every frame of every shot -> out\<slice>_tour[_<tag>].mp4.  The game
         # records without sound and writes down what it played (timeline.json); Tools\tour_audio.py mixes the track from that.
-        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\tour.json' }
+        if (-not $Shots) { $Shots = Get-ShotList 'tour' 'tour.json' }
         $frames = Join-Path $Root "Saved\MishiTour\$Slice"
         if (Test-Path $frames) { Remove-Item -Recurse -Force $frames }
         $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended -log" 'tour'
@@ -146,7 +157,7 @@ switch ($Do) {
     'stills' {
         # path-traced stills of held poses: Tools\shots_stills.json (or -Shots <file>) -> out\stills\<slice>[_<tag>]\<name>.png,
         # rendered offscreen (2560x1440 unless -ResX / -ResY say otherwise); about two minutes a still at 512 samples
-        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\shots_stills.json' }
+        if (-not $Shots) { $Shots = Get-ShotList 'stills' 'shots_stills.json' }
         if (-not $PSBoundParameters.ContainsKey('ResX')) { $ResX = 2560 }
         if (-not $PSBoundParameters.ContainsKey('ResY')) { $ResY = 1440 }
         $dir = Join-Path $Root "out\stills\$Slice$(if ($Tag) { '_' + $Tag })"
@@ -158,7 +169,7 @@ switch ($Do) {
     }
     'shots' {
         # look-dev stills: Tools\shots_lookdev.json (or -Shots <file>) -> Saved\MishiShots\<slice>[_<tag>]\<name>.png
-        if (-not $Shots) { $Shots = Join-Path $Root 'Tools\shots_lookdev.json' }
+        if (-not $Shots) { $Shots = Get-ShotList 'shots' 'shots_lookdev.json' }
         $dir = Join-Path $Root "Saved\MishiShots\$Slice$(if ($Tag) { '_' + $Tag })"
         if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
         $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'shots'

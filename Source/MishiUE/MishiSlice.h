@@ -39,7 +39,22 @@ struct FMishiRule
 struct FMishiPhase
 {
 	FString Trigger;
+	FString Label;                        // the button's text (a showcase slice names its actions; empty: "phase N")
 	float TimerMin = 10.f, TimerMax = 15.f;  // the auto mode's stay in this phase
+};
+
+/** What a part does at a moment of its time, as the game's timeline has it (showcase slices: "cues"). */
+struct FMishiCue
+{
+	float Time = 0.f;
+	// 0 a sound, 1 a voice line, 2 a camera shake, 3 anything else (hits: for effects to come), 4 the unit moves (the dash to
+	// the one it attacks, the way back), 5 the game's own camera for a while
+	int32 Kind = 3;
+	FString File, Jp, En;
+	FString Move;                         // kind 4: "attack" (to Radius metres in front of the target) or "return"
+	float Volume = 1.f, Duration = 0.5f, Amplitude = 0.5f, Frequency = 0.f, Radius = 1.f, Fov = 40.f;
+	FVector Pos = FVector::ZeroVector;    // kind 5: where the camera stands, in the unit's space (Unity)
+	FQuat Rot = FQuat::Identity;
 };
 
 struct FMishiVoice { FString Part, Jp, En; };
@@ -83,6 +98,11 @@ struct FMishiLight
 
 struct FMishiSlice
 {
+	FString Kind;                         // "eros" (a couple in a room, four phases) or "showcase" (one character, her actions)
+	bool bMale = true;                    // the slice has him
+	TArray<int32> Auto;                   // the auto mode's round of phases (empty: phase after phase, as the eros mode goes)
+	TMap<FString, TArray<FMishiCue>> Cues;   // by part
+	FVector Target = FVector(0.0, 0.0, 6.0);   // a showcase: where the one she fights stands, in the anchor's space (Unity)
 	FString Posture, Title, Outfit, Scene, Room;
 	FString FemaleRoot, MaleRoot;
 	FMishiUnityXform Anchor;              // the couple's origin in the room

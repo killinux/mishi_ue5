@@ -6,7 +6,11 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 
 **只提交代码。** `Import/`（游戏导出物）、`Content/`（导入后的资产）、`out/`、`Saved/` 都不进 git，仅供个人使用。
 
-当前做完的切片：**Ines（伊娜丝）eros15 × 房间 07**（`eros15_07`）。
+当前做完的切片：
+
+- **Ines（伊娜丝）eros15 × 房间 07**（`eros15_07`）—— 蜜室的一个场景。
+- **伊娜丝 a08 × 战斗舞台 s01**（`a08_s01`）—— 不是蜜室：金甲巨剑的 a08 站在城堡屋顶的战斗舞台上，
+  按钮是她的战斗动作（按游戏的技能时间线复现），为的是把高清盔甲看清楚。见下面"展示切片"一节。
 
 ## 目录
 
@@ -19,18 +23,19 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 | `Tools/mishi_anim.py` | 动作：Unity 逐帧轨道 → AnimSequence |
 | `Tools/mishi_materials.py` | 用代码生成母材质（皮肤 / 眼睛 / 头发 / 睫毛 / 泪 / 房间…）和每个游戏材质的实例 |
 | `Tools/mishi_look.py` | 关卡：摆房间、灯光设计、天空、雾、后期；所有"观感"数字都在 `LOOK` 表里 |
-| `Tools/shots_lookdev.json` / `tour.json` | 检查图的机位表 / 巡游片的分镜表 |
+| `Tools/shots_lookdev.json` / `tour.json` / `shots_stills.json` | eros15_07 的检查图机位表 / 巡游片分镜表 / 路径追踪定格图机位表 |
+| `Tools/shots_<切片>.json` / `tour_<切片>.json` / `stills_<切片>.json` | 某个切片自己的三张表（有就用它，现在有 `a08_s01` 的） |
 | `Tools/sheet.py` / `tour_audio.py` | 检查图拼版 / 巡游片的音轨合成 |
+| `Tools/make_showcase.py` / `mishi_sky.py` | 展示切片：Unity 导出的原始数据 → `slice.json` / 把舞台的天空盒烘焙成一张经纬图 |
 | `Config/` | 硬件光追 Lumen + 虚拟阴影、路径追踪、无烘焙光照、手动曝光、TSR 100%、SM6；默认地图和 GameMode；传统 FBX 导入；动画默认 60 fps；Python 远程执行 |
-| `Tools/shots_stills.json` | 路径追踪定格图的机位表 |
 
 | C++ 类 | 作用 |
 |---|---|
-| `AMishiCouple` | 一对角色：部位（part）状态机 = 游戏 Animator 的规则，自动模式，语音 / 部位音效循环 / BGM，旁白，形态键轨道，皮肤的潮红和出汗（随阶段推进），男性三种画法（皮肤 / 游戏的剪影 / 隐藏） |
+| `AMishiCouple` | 一对角色（展示切片里只有她）：部位（part）状态机 = 游戏 Animator 的规则，自动模式，语音 / 部位音效循环 / BGM，旁白，形态键轨道，皮肤的潮红和出汗（随阶段推进），男性三种画法（皮肤 / 游戏的剪影 / 隐藏）；展示切片的**时间线提示**（cues：到某一秒放音效 / 语音 / 震镜头 / 单位冲刺 / 切技能镜头） |
 | `UMishiAnimInstance` | 不用动画蓝图的双槽播放器：当前片段 + 渐出片段，在 proxy 的 `Evaluate` 里混合 |
-| `AMishiCameraPawn` | 游戏 Cinemachine 自由视角的复刻（三条轨道、偏航、缩放、目标盒内平移）+ 真实镜头景深（自动对焦到她的眼睛、近距离自动收光圈）+ 不穿墙 + 挡住角色的细物体淡出 |
+| `AMishiCameraPawn` | 游戏 Cinemachine 自由视角的复刻（三条轨道、偏航、缩放、目标盒内平移）+ 真实镜头景深（自动对焦到她的眼睛、近距离自动收光圈）+ 不穿墙 + 挡住角色的细物体淡出；展示切片：跟着她的胯走、震动、游戏的技能镜头、跟机补光 |
 | `AMishiPlayerController` | 鼠标键盘、Slate 面板；`-MishiShots` 检查图 / `-MishiTour` 逐帧录片 |
-| `SMishiHud` | 面板：阶段 1-4、自动、语音、男性画法、音效、潮红、镜头预设、旁白 |
+| `SMishiHud` | 面板：切片有几个阶段就有几个按钮（蜜室是阶段 1-4，展示切片是带名字的动作）、自动、语音、男性画法、音效、潮红、技能镜头、镜头预设、旁白 |
 | `FMishiSlice` | 读 slice.json |
 
 ## 前提
@@ -173,6 +178,66 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 录片时游戏没有声音设备，但把"哪一帧开始放哪个声音"写进 `timeline.json`，`tour_audio.py` 据此用 ffmpeg
 合成和游戏里一样的音轨（语音被下一句打断、部位音效循环到下一段、BGM 垫底）。
 
+## 展示切片：伊娜丝 a08 × 战斗舞台 s01（`a08_s01`）
+
+```powershell
+# Unity 端：角色和舞台各跑一次（模型来自 Assets/RoeFighter/Generated/a08，动作表和技能时间线来自 Assets/ROE）
+cd E:\code\othercode\mishi
+.\tools\unity_batch.ps1 -Method Mishi.EditorTools.MishiUeExport.ExportShowcase -Name ue_show_actors -Graphics `
+    -Extra '-mishiChar','a08','-mishiStage','s01','-mishiOut','E:\code\othercode\mishi_ue5\Import','-mishiWhat','actors'
+.\tools\unity_batch.ps1 -Method Mishi.EditorTools.MishiUeExport.ExportShowcase -Name ue_show_room -Graphics `
+    -Extra '-mishiChar','a08','-mishiStage','s01','-mishiOut','E:\code\othercode\mishi_ue5\Import','-mishiWhat','room'
+# UE 端
+cd E:\code\othercode\mishi_ue5
+python Tools\make_showcase.py Import\a08_s01                 # showcase.json + skill_sheet.json -> slice.json，烘焙天空（--no-sky 跳过烘焙）
+python Tools\ue_remote.py Tools\import_slice.py a08_s01      # 编辑器要开着
+powershell -File Tools\ue.ps1 play   -Slice a08_s01          # 窗口运行，自己操作
+powershell -File Tools\ue.ps1 shots  -Slice a08_s01 -Tag x   # 检查图（Tools\shots_a08_s01.json）
+powershell -File Tools\ue.ps1 tour   -Slice a08_s01 -ResX 1920 -ResY 1080   # 影片 -> out\a08_s01_tour.mp4（Tools\tour_a08_s01.json）
+powershell -File Tools\ue.ps1 stills -Slice a08_s01          # 路径追踪定格图 -> out\stills\a08_s01（Tools\stills_a08_s01.json）
+```
+
+**动作**（面板上 9 个按钮，数字键 1-9）：战斗站姿、展示、互动 1 / 2、技能 1 / 2、大招、受击、倒下。一次性动作播完回到
+站姿或展示姿势；"自动"按一张表轮流播。`slice.json` 的 `kind` 是 `showcase`，没有男性，阶段就是按钮。
+
+**时间线**：游戏每个技能是一条 Timeline。`make_showcase.py` 把它变成每个部位的 cues，`AMishiCouple::FireCues` 到点执行：
+
+| cue | 做什么 |
+|---|---|
+| `sfx` / `voice` | 技能自己的音效（播到完）/ 语音（日 / 英，被下一句打断） |
+| `shake` | 命中时震镜头（幅度、时长、频率来自游戏的 Cinemachine impulse） |
+| `move` | **单位的位移**：`attack` = 0.2 秒冲到目标前 1 m（目标 = 舞台敌方第一个站位，她正前方 6 m），`return` = 回原位。动作片段是配合这个位移做的 —— 片段里她往回退的量正好是单位往前冲的量；不做位移她会在原地向后滑 2.4 m |
+| `camera` | **游戏的技能镜头**：挂在单位身后 4.27 m、高 1.42 m 的虚拟相机，视场角 40°，跟着冲刺走。面板"技能镜头"打开时技能期间切过去（默认关：自由镜头更适合看盔甲）。大招在游戏里没有自己的镜头，这里给了同一个 |
+| `hit` | 命中时刻（留给以后的特效） |
+
+技能的编排是给"身后的技能镜头"看的：她冲到敌人面前，然后**转身朝镜头**定格（技能 1 的 1.0–2.0 秒和 3.0–3.8 秒、
+大招的 3.2–3.8 秒）。所以从正面的自由镜头看，这几个定格是背影；影片和定格图的机位是按每个姿势的朝向摆的。
+技能 1 里巨剑会分成两把，技能 2 把剑扔出去再接住 —— 武器骨骼 `Point007_L/R` 直接挂在根上，自己有动作。
+
+**自由镜头跟人**：轨道中心跟着她的胯（`Bip001`）走，水平全跟、起跳只跟一半、原地晃动不跟，滞后 0.22 秒。
+近景的清晰纵深放宽到 36 cm（一块肩甲从前沿到后沿都清楚）。
+
+**天空**：舞台的天空盒是立方体贴图 × 4.59，游戏在它上面盖了一条雾色带，从地平线一直盖到仰角 41°、浓度 86% ——
+所以游戏里平视过去天空是一片平的浅蓝，底下的画（云海、雪山、贴着地平线的太阳）根本看不到。`mishi_sky.py`
+把立方体贴图烘焙成一张 UE 方向的经纬图（16 位 PNG，线性 / 8），**默认不要雾带**（`--fog-band` 保留）；
+关卡里它贴在 10 km 外的天空球上（Is Sky 材质，天光实时捕获它，捕获分辨率 512 —— 抛光的金属要映出云）。
+
+**太阳**：游戏把这个舞台的平行光放在仰角 73°（正午的平光，烘焙）。这里太阳放在天空图里发亮的方位
+（她正前方偏右 35°），仰角抬到 32°：从她周围的地毯向天空打射线，量出这个角度下她和前后 5 m 都在阳光里，
+城堡塔楼的影子落在远处。颜色偏暖 (1, 0.90, 0.76)。数字都在 `mishi_look.py` 的 `LOOK_SHOWCASE`。
+
+**跟机补光**：一个太阳照不全 —— 站姿朝向偏离太阳 49°，展示姿势 22°，技能的定格姿势背对太阳。
+`AMishiCameraPawn::Fill` 是一盏挂在相机上的平行光（沿视线、略从上方），只照角色的光照通道、不投影、不反弹，
+光源张角 24°（在金属上是一片柔和的高光而不是闪光灯的亮点），强度约为太阳的 0.29（`LOOK["camera_fill"]`）。
+舞台不受它影响；路径追踪同样认光照通道。
+
+**盔甲材质**（`M_Mishi_Armor`，数字在 `mishi_materials.py` 的 `ARMOR_LOOK`）：游戏的贴图 4096²，
+遮罩图 R 金属 / G 光泽 / B AO。游戏把金色画在真实黄金反射率的三分之一上（身体那张 (0.31, 0.21, 0.11)，
+盔甲那张 (0.48, 0.36, 0.19)，黄金是 (1.0, 0.77, 0.34)）——它的着色器另外加菲涅尔项。在 UE 里金属的底色就是镜面色，
+照搬就是一块暗铜。所以金属部分：底色 ×1.7（保持色相，超过 1 整体压回）、饱和度 ×1.25（浅金映着蓝天会发灰绿）、
+粗糙度 ×0.7、缝隙按 AO 压暗 0.35（金属没有漫反射可以给 AO 压）。Lumen 追踪反射的粗糙度上限提到 0.65
+（默认 0.4 以上的金属只拿到模糊的探针）。
+
 ## 操作
 
 | 输入 | 作用 |
@@ -182,7 +247,7 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 | 滚轮 / Q E / PageUp PageDown | 缩放 |
 | A D / ← →，W S / ↑ ↓ | 偏航，轨道高度 |
 | 中键 / Home | 镜头复位 |
-| 1 2 3 4 | 阶段 1-4（和游戏一样：先走过渡部位） |
+| 1 2 3 4 | 阶段 1-4（和游戏一样：先走过渡部位）；展示切片：1-9 是九个动作 |
 | 空格 | 自动开 / 关 |
 | V | 语音：日 → 英 → 关 |
 | M | 男性：皮肤 → 剪影 → 隐藏 |
@@ -211,10 +276,21 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
   不确定的控制台变量用 `<变量名> ?` 打帮助到日志里看；`DumpConsoleCommands` 的输出不进日志。
 - 桌面默认的渲染分辨率是自动的（1600×900 时只有 84%，靠 TSR 放大）：配置里写死 `r.ScreenPercentage=100`。
 - 写文件工具会把内容里的 `\uXXXX` 变成字符；bash heredoc 会吃反斜杠。带反斜杠的脚本用写文件工具写。
+- **材质编译失败是静默的**：`TextureSampleParameter2D` 采样类型设成 Linear Color、默认贴图却是引擎的 sRGB 默认贴图，
+  母材质编不过，引擎悄悄换成默认材质（天空球变黑，屏幕上一行黄字 "skydome mesh ... does not cover"）。
+  给参数一张线性的默认贴图；导入后在编辑器日志里搜 `Failed to compile`。
+- 指数高度雾会把 10 km 外的天空球整个盖成雾色（看起来像"天空是平的"）：设 `fog_cutoff_distance`。
+- Is Sky 的网格不用关"光追可见"：Lumen 的光追场景自己会排除它（`r.RayTracing.ExcludeSky`），路径追踪只让相机光线看见它
+  （其余光线拿天光，不会算两遍）。关掉的话路径追踪的背景变成模糊的天光贴图，地平线以下是黑的。
+- 编辑器开着时 `-game` 进程的日志是 `Saved\Logs\MishiUE_2.log`，不是 `MishiUE.log`。
+- 机位表里 `from` 是**骨骼轴**方向；只有 `bone` 没有 `from` 是绕那根骨骼转（`yaw` / `y` / `zoom`）。
+  一个机位同时给 `phase` + `at` 再拍很短的时间，拍到的是混合途中的姿势：先用一个 `_` 机位进入那个部位。
+- 她的朝向不能凭感觉：站姿朝 -19°、展示姿势 +52°、技能里到处转（按两肩的连线算）。机位的 `yaw` = 她的朝向 + 20 时正对她。
 
 ## 还没做 / UE5 能继续发挥的方向
 
-- Effect 层（液体、粒子）：Niagara + 贴花
+- Effect 层（液体、粒子）：Niagara + 贴花；**a08 技能的特效**（每个技能 12–17 个特效预制体：剑光、命中、烟、光环）还没移植，
+  时间线里它们的起止时间和挂点都已经在 `skill_sheet.json` 里
 - 头发和胸部的弹簧物理（游戏里蜜室的动作是手 K 的，头发不动）
 - Groom 发丝、Substrate 皮肤（带汗水涂层）、路径追踪的动态片段（Movie Render Queue）
 - 回忆模式、换身体、更多场景和房间、选择菜单

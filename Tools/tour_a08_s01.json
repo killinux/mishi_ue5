@@ -1,0 +1,37 @@
+[
+  {"name": "open_wide",   "phase": 1, "seconds": 5.0, "yaw": 215, "y": 0.72, "zoom": 2.3, "drift": -5.0, "dolly": -0.02},
+  {"name": "show_front",  "seconds": 4.5, "yaw": 58, "y": 0.5, "zoom": 1.0, "drift": 3.0, "dolly": -0.02},
+  {"name": "show_low",    "seconds": 4.0, "yaw": 96, "y": 0.12, "zoom": 1.05, "drift": -3.5},
+  {"name": "pauldron",    "seconds": 3.5, "bone": "Bip001-L-UpperArm", "offset": [0, 0, 4], "yaw": 30, "y": 0.6, "zoom": 0.22, "drift": 5.0},
+  {"name": "chest",       "seconds": 3.5, "bone": "Bip001-Spine2", "from": [0.3, -1, 0.25], "distance": 86, "push": -2.0},
+  {"name": "belt",        "seconds": 3.5, "bone": "Bip001-Pelvis", "from": [0.2, -1, 0.5], "distance": 96, "push": -2.0},
+  {"name": "greaves",     "seconds": 3.0, "bone": "Bip001-R-Calf", "offset": [0, 0, -22], "yaw": 84, "y": 0.4, "zoom": 0.3, "drift": 5.0},
+  {"name": "face",        "seconds": 3.5, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.3], "distance": 56, "push": -1.5},
+  {"name": "show_back",   "seconds": 3.5, "yaw": 262, "y": 0.5, "zoom": 1.0, "drift": -5.0},
+
+  {"name": "react",       "phase": 2, "seconds": 2.6, "yaw": 22, "y": 0.5, "zoom": 0.72, "drift": -2.0},
+
+  {"name": "stance",      "phase": 0, "seconds": 2.0, "yaw": 26, "y": 0.3, "zoom": 1.1, "drift": -4.0},
+
+  {"name": "s1_dash",     "phase": 4, "seconds": 0.8, "skill_cam": true, "yaw": 180, "y": 0.5, "zoom": 1.4},
+  {"name": "s1_dual",     "seconds": 1.3, "bone": "Bip001-Spine1", "yaw": -98, "y": 0.4, "zoom": 1.05, "drift": 6.0},
+  {"name": "s1_spin",     "seconds": 0.9, "bone": "Bip001-Spine1", "yaw": 64, "y": 0.5, "zoom": 1.7},
+  {"name": "s1_over",     "seconds": 1.0, "bone": "Bip001-Spine1", "yaw": 192, "y": 0.25, "zoom": 0.95, "drift": -5.0},
+  {"name": "s1_back",     "seconds": 0.85, "yaw": 38, "y": 0.5, "zoom": 1.5},
+  {"name": "idle_a",      "seconds": 1.0, "yaw": 0, "y": -1, "zoom": 1.0, "drift": 3.0},
+
+  {"name": "s2_swing",    "phase": 5, "seconds": 1.3, "bone": "Bip001-Spine1", "yaw": 68, "y": 0.45, "zoom": 1.2},
+  {"name": "s2_throw",    "seconds": 0.7, "bone": "Bip001-Spine2", "yaw": -12, "y": 0.45, "zoom": 0.9},
+  {"name": "s2_leap",     "seconds": 1.0, "bone": "Bip001-Spine1", "yaw": -125, "y": 0.45, "zoom": 1.5},
+  {"name": "s2_catch",    "seconds": 1.2, "bone": "Bip001-Spine1", "yaw": 32, "y": 0.4, "zoom": 1.1, "drift": -4.0},
+  {"name": "idle_b",      "seconds": 0.8, "yaw": 0, "y": -1, "zoom": 1.0, "drift": 3.0},
+
+  {"name": "s3_wind",     "phase": 6, "seconds": 1.0, "bone": "Bip001-Spine1", "yaw": 0, "y": 0.45, "zoom": 1.4},
+  {"name": "s3_slash",    "seconds": 1.0, "bone": "Bip001-Spine1", "yaw": 62, "y": 0.5, "zoom": 1.5},
+  {"name": "s3_raise",    "seconds": 0.7, "bone": "Bip001-Spine2", "yaw": 50, "y": 0.22, "zoom": 0.9},
+  {"name": "s3_strike",   "seconds": 0.5, "bone": "Bip001-Spine1", "yaw": 170, "y": 0.5, "zoom": 1.5},
+  {"name": "s3_finish",   "seconds": 1.0, "bone": "Bip001-Spine1", "yaw": -146, "y": 0.35, "zoom": 1.0, "drift": 5.0},
+  {"name": "s3_out",      "seconds": 0.65, "yaw": -20, "y": 0.5, "zoom": 1.3},
+
+  {"name": "end_show",    "phase": 1, "seconds": 5.0, "yaw": 58, "y": 0.55, "zoom": 1.2, "drift": 2.5, "dolly": 0.035}
+]

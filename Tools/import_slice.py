@@ -212,9 +212,11 @@ def import_textures(wanted, folder, character=False):
 def character_ids(slice_data):
     ids = []
     for who in ("female", "male"):
-        m = re.match(r"pc_([a-z]\d+)", (slice_data.get(who) or {}).get("root") or "")
-        if m:
-            ids.append((who, m.group(1)))
+        info = slice_data.get(who) or {}
+        m = re.match(r"pc_([a-z]\d+)", info.get("root") or "")
+        cid = info.get("character") or (m.group(1) if m else None)      # (a showcase slice names its character)
+        if cid:
+            ids.append((who, cid))
     return ids
 
 
@@ -575,12 +577,13 @@ def main():
     sounds = step_audio(slice_data) if "audio" in STEPS else load_sounds()
     clips_f = sorted({p["female_clip"] for p in slice_data["parts"] if p.get("female_clip")})
     clips_m = sorted({p["male_clip"] for p in slice_data["parts"] if p.get("male_clip")})
+    has_him = bool((slice_data.get("male") or {}).get("ok", True)) and os.path.isfile(os.path.join(SRC, "male.fbx"))
     if "bodies" in STEPS:
         her, her_anims = step_body("female", "female.fbx", clips_f)
-        him, his_anims = step_body("male", "male.fbx", clips_m)
+        him, his_anims = step_body("male", "male.fbx", clips_m) if has_him else (None, [])
     else:
         her, her_anims = load_body("female")
-        him, his_anims = load_body("male")
+        him, his_anims = load_body("male") if has_him else (None, [])
     meshes, check_mesh = step_room() if "room" in STEPS else load_room()
 
     instances, masters = {}, {}
@@ -598,7 +601,7 @@ def main():
 
     if "level" in STEPS:
         info = mishi_look.build_level(MAP, SLICE, slice_text, slice_data, placements, meshes, instances, masters, her, her_anims, him, his_anims,
-                                      sounds, check_mesh, warn)
+                                      sounds, check_mesh, warn, SRC)
         report["steps"]["level"] = info
     eal.save_directory("/Game/Mishi", only_if_is_dirty=True, recursive=True)
     report["seconds"] = round(time.time() - t0, 1)

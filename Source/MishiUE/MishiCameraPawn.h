@@ -9,6 +9,7 @@
 #include "MishiCameraPawn.generated.h"
 
 class UCameraComponent;
+class UDirectionalLightComponent;
 class AMishiCouple;
 
 UCLASS()
@@ -21,6 +22,11 @@ public:
 
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TObjectPtr<UCameraComponent> Camera;
+
+	/** The fill that goes with the camera: a directional light along the view (from a little above it), on the bodies' lighting
+	 *  channel only, without shadows or bounce - the same on her at any distance.  Off unless the couple asks for it. */
+	UPROPERTY(VisibleAnywhere, Category = "Mishi")
+	TObjectPtr<UDirectionalLightComponent> Fill;
 
 	/** Degrees of yaw / orbit height / metres of pan per pixel of mouse drag, the zoom step per wheel notch (the Unity version's). */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
@@ -71,9 +77,37 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float SeeThroughHold = 1.2f;
 
+	/** A blow of a skill shakes the camera: cm of sway for a shake of amplitude 1 (the game's Cinemachine impulse). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float ShakeScale = 4.f;
+
 	/** Seconds the focus takes to settle on a new distance. */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float FocusEase = 0.25f;
+
+	/** A showcase's orbit goes with her: its centre follows her hips when a skill carries her across the stage (set from the
+	 *  slice's kind; the eros postures stay where they are). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bFollow = false;
+
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	FName FollowBone = TEXT("Bip001");
+
+	/** Where the hips are when she stands: cm above the actor. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float FollowHeight = 96.f;
+
+	/** Seconds the camera takes to catch up with her. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float FollowEase = 0.22f;
+
+	/** A skill is seen through the game's own camera while its timeline has one (behind the unit, following its dash); off: the
+	 *  orbit stays.  A showcase starts with it on. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSkillCamera = false;
+
+	/** The game's camera has the picture now. */
+	bool IsGameCamera() const { return bSkillCamera && GameCamLeft > 0.f; }
 
 	void Setup(AMishiCouple* InCouple);
 	/** The rig's numbers are read (the first tick after the couple is ready). */
@@ -130,6 +164,16 @@ private:
 	float LastDistance = 300.f;
 	float Focus = 300.f;
 	float Pull = 1.f;                     // how much of the orbit's distance the walls leave (eased)
+	FVector Follow = FVector::ZeroVector; // how far the orbit has gone with her (world, eased)
+	float GameCamLeft = 0.f, GameCamFov = 40.f;       // the game's camera: seconds it still has, its vertical field of view,
+	FVector GameCamPosU = FVector::ZeroVector;        // its place and turn in the unit's space (Unity),
+	FQuat GameCamRotU = FQuat::Identity;
+	FVector GameCamAt = FVector::ZeroVector;          // where it is now (world, eased behind the unit)
+	bool bGameCamFresh = false;
+	FDelegateHandle CameraHandle;
+	void CutView();
+	float ShakeAmplitude = 0.f, ShakeSeconds = 0.f, ShakeFrequency = 18.f, ShakeClock = 0.f;
+	FDelegateHandle ShakeHandle;
 	bool bCut = true;
 	struct FFade
 	{

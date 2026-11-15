@@ -2,7 +2,7 @@
 
 The game process records without a sound device and writes down what the scene played and when (<frames>/timeline.json, by
 frame).  This puts the same sounds together with ffmpeg: a voice line is cut off by the next one, a part's loop runs until the
-next part's starts, the room's music loops under it all - at the volumes the game uses.
+next part's starts, a skill's own sounds play to their ends, the room's music loops under it all - at the volumes the game uses.
 
     python Tools/tour_audio.py --frames Saved/MishiTour/eros15_07 --slice Import/eros15_07 --out Saved/MishiTour/eros15_07/tour.m4a
 
@@ -74,6 +74,14 @@ def main():
                 missing.append(e["file"])
                 continue
             add(path, start, end - start, float(e.get("volume", 1.0)), loop)
+    # a skill's own sounds (kind "shot"): each plays to its end, whatever follows
+    shots = [e for e in events if e["kind"] == "shot" and e.get("file")]
+    for e in shots:
+        path = sound_file(args.slice, e["file"])
+        if not path:
+            missing.append(e["file"])
+            continue
+        add(path, e["frame"] / args.fps, total - e["frame"] / args.fps, float(e.get("volume", 1.0)), False)
     if not inputs:
         sys.exit("no sounds in the timeline")
 
@@ -89,9 +97,10 @@ def main():
         f.write(graph)
     cmd += ["-filter_complex_script", script, "-map", "[out]", "-c:a", "aac", "-b:a", "192k", args.out]
     r = subprocess.run(cmd)
-    print("tour audio: %.1f s, %d sounds (%d voice, %d loops)%s -> %s" % (
+    print("tour audio: %.1f s, %d sounds (%d voice, %d loops, %d one-shots)%s -> %s" % (
         total, len(inputs), sum(1 for e in events if e["kind"] == "voice" and e.get("file")),
-        sum(1 for e in events if e["kind"] == "sfx" and e.get("file")), ", missing %s" % sorted(set(missing)) if missing else "", args.out))
+        sum(1 for e in events if e["kind"] == "sfx" and e.get("file")), len(shots),
+        ", missing %s" % sorted(set(missing)) if missing else "", args.out))
     sys.exit(r.returncode)
 
 

@@ -2,6 +2,7 @@
 #include "MishiCouple.h"
 #include "MishiUE.h"
 #include "Camera/CameraComponent.h"
+#include "Components/DirectionalLightComponent.h"
 #include "CollisionQueryParams.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/HitResult.h"
@@ -11,6 +12,8 @@
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/PlayerController.h"
 
 AMishiCameraPawn::AMishiCameraPawn()
 {
@@ -22,6 +25,19 @@ AMishiCameraPawn::AMishiCameraPawn()
 	Camera->FieldOfView = 25.f;
 	// Unreal's FieldOfView is horizontal; the game's 25 degrees are vertical (Unity), handled in UpdatePose
 	SetActorEnableCollision(false);
+	Fill = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Fill"));
+	Fill->SetupAttachment(Camera);
+	Fill->SetRelativeRotation(FRotator(-14.f, 0.f, 0.f));       // from a little above the lens
+	Fill->SetMobility(EComponentMobility::Movable);
+	Fill->SetVisibility(false);
+	Fill->Intensity = 0.f;
+	Fill->CastShadows = false;
+	Fill->bAtmosphereSunLight = false;
+	Fill->ForwardShadingPriority = 0;                           // the level's sun stays the sun of the fog and of translucent things
+	Fill->VolumetricScatteringIntensity = 0.f;
+	Fill->IndirectLightingIntensity = 0.f;                      // (Lumen's surface cache knows no channels: no bounce of it)
+	Fill->LightingChannels.bChannel0 = false;                   // the bodies' channel alone: the stage keeps its own light
+	Fill->LightingChannels.bChannel1 = true;
 }
 
 namespace
@@ -47,8 +63,57 @@ void AMishiCameraPawn::Setup(AMishiCouple* InCouple)
 		return;
 	Rig = WithRigs(InCouple->Slice().Camera);
 	Anchor = InCouple->Slice().PostureAnchor;
+	if (InCouple->Slice().Kind == TEXT("showcase"))
+	{
+		bFollow = true;
+		SharpDepth = FMath::Max(SharpDepth, 36.f);      // close up, an armour plate is sharp from its front edge to its back one
+	}
+	if (InCouple->CameraFill > 0.f)
+	{
+		Fill->SetIntensity(InCouple->CameraFill);
+		Fill->SetLightColor(InCouple->CameraFillColor);
+		Fill->SetLightSourceAngle(InCouple->CameraFillAngle);
+		Fill->SetVisibility(true);
+	}
+	else
+		Fill->SetVisibility(false);
+	if (!CameraHandle.IsValid())
+		CameraHandle = InCouple->OnCamera.AddWeakLambda(this, [this](float Seconds, float Fov, const FVector& PosU, const FQuat& RotU)
+		{
+			const bool bWas = GameCamLeft > 0.f;
+			GameCamLeft = FMath::Max(Seconds, 0.f);
+			if (Seconds > 0.f)
+			{
+				GameCamFov = Fov;
+				GameCamPosU = PosU;
+				GameCamRotU = RotU;
+				bGameCamFresh = true;
+			}
+			if (bSkillCamera && (bWas || Seconds > 0.f))
+				CutView();                                  // into it and out of it by a cut
+		});
+	if (!ShakeHandle.IsValid())
+		ShakeHandle = InCouple->OnShake.AddWeakLambda(this, [this](float Amplitude, float Seconds, float Frequency)
+		{
+			ShakeAmplitude = Amplitude;
+			ShakeSeconds = FMath::Max(Seconds, 0.05f);
+			// the timeline's number (0.2 .. 0.6) is the gain on the game's noise profile, not a rate: as hertz it would be a
+			// slow drift nobody sees.  A blow shakes at 12 .. 24 Hz.
+			ShakeFrequency = 12.f + 12.f * FMath::Clamp(Frequency, 0.f, 1.f);
+			ShakeClock = 0.f;
+		});
 	ResetView();
 	UpdatePose();
+}
+
+void AMishiCameraPawn::CutView()
+{
+	// no easing in from the last view, and no temporal history of the last picture
+	bCut = true;
+	if (const UWorld* W = GetWorld())
+		if (APlayerController* PC = W->GetFirstPlayerController())
+			if (PC->PlayerCameraManager)
+				PC->PlayerCameraManager->SetGameCameraCutThisFrame();
 }
 
 void AMishiCameraPawn::ResetView()
@@ -282,7 +347,7 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 	if (bTargetOverride)
 	{
 		// a world point back in the couple's Unity space (the inverse of MishiSpace::Position)
-		const FVector L = C->GetActorTransform().InverseTransformPosition(TargetOverrideWorld);
+		const FVector L = C->Home().InverseTransformPosition(TargetOverrideWorld);      // (Home: UnityToWorld's own frame)
 		TargetU = FVector(-L.X, L.Z, L.Y) / 100.0;
 	}
 	const FVector OffsetU = Rot.RotateVector(FVector(0, O.X, -O.Y)) * Zoom;
@@ -290,13 +355,46 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 	FVector Pos = C->UnityToWorld(PosU);
 	FVector Target = C->UnityToWorld(TargetU);
 	FVector Up = C->UnityDirToWorld(Anchor.Rot.RotateVector(FVector(0, 1, 0)));
+	// a showcase: the orbit goes with her hips - a skill carries her metres across the stage - but not with her swaying on the spot
+	const USkeletalMeshComponent* Her = C->GetHer();
+	if (bFollow && !bTargetOverride && !bPoseOverride && Her && Her->GetBoneIndex(FollowBone) != INDEX_NONE)
+	{
+		FVector Want = Her->GetBoneLocation(FollowBone) - C->Home().GetLocation() - FVector(0.0, 0.0, FollowHeight);
+		Want.Z *= 0.5;                                  // a leap lifts the view half as far
+		Want *= FMath::SmoothStep(12.0, 40.0, Want.Size());
+		const float K = DeltaSeconds > 0.f && !bCut && FollowEase > 0.f ? 1.f - FMath::Exp(-DeltaSeconds / FollowEase) : 1.f;
+		Follow = FMath::Lerp(Follow, Want, K);
+		Pos += Follow;
+		Target += Follow;
+	}
+	else
+		Follow = FVector::ZeroVector;
+	// a skill's own camera, as the game's timeline has it: it hangs on the unit (behind her, where the skill is made to be seen
+	// from - she dashes off and turns to it), goes with the unit's dash, and hands back to the orbit by a cut
+	if (GameCamLeft > 0.f && DeltaSeconds > 0.f)
+	{
+		GameCamLeft -= DeltaSeconds;
+		if (GameCamLeft <= 0.f && bSkillCamera)
+			CutView();
+	}
+	const bool bGameCam = bSkillCamera && GameCamLeft > 0.f && !bPoseOverride && !bTargetOverride;
+	if (bGameCam)
+	{
+		const FTransform Unit = C->GetActorTransform();
+		const FVector Want = Unit.TransformPosition(MishiSpace::Position(GameCamPosU));
+		GameCamAt = bGameCamFresh || DeltaSeconds <= 0.f ? Want : FMath::Lerp(GameCamAt, Want, 1.f - FMath::Exp(-DeltaSeconds / 0.12f));
+		bGameCamFresh = false;
+		Pos = GameCamAt;
+		Target = Pos + Unit.TransformVectorNoScale(MishiSpace::Direction(GameCamRotU.RotateVector(FVector(0.0, 0.0, 1.0)))) * GameCamPosU.Size() * 100.0;
+		Up = FVector::UpVector;
+	}
 	if (bPoseOverride)
 	{
 		Pos = PoseOverridePos;
 		Target = PoseOverrideTarget;
 		Up = PoseOverrideUp;
 	}
-	else if (bAvoidWalls)
+	else if (bAvoidWalls && !bGameCam)
 	{
 		// in at once, out again gently
 		const float Free = FreeFraction(Target, Pos);
@@ -305,7 +403,18 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 		Pos = Target + (Pos - Target) * FMath::Min(Pull, 1.f);
 	}
 	const FRotator Look = FRotationMatrix::MakeFromXZ(Target - Pos, Up).Rotator();
-	SetActorLocationAndRotation(Pos, Look);
+	FVector Shaken = Pos;
+	if (ShakeClock < ShakeSeconds)
+	{
+		// two sines out of step, dying away: the picture sways across and up and down, the look stays on the target's side
+		const float Left = 1.f - ShakeClock / ShakeSeconds;
+		const float W = ShakeClock * ShakeFrequency * 2.f * PI;
+		const FRotationMatrix M(Look);
+		Shaken += (M.GetUnitAxis(EAxis::Y) * FMath::Sin(W) + M.GetUnitAxis(EAxis::Z) * FMath::Sin(W * 1.31f + 1.7f))
+			* (ShakeAmplitude * ShakeScale * Left * Left);
+		ShakeClock += DeltaSeconds;
+	}
+	SetActorLocationAndRotation(Shaken, Look);
 	UpdateSeeThrough(DeltaSeconds, Pos);
 	LastDistance = float((Target - Pos).Size());
 	// the camera's right and up back in anchor space, for panning in the screen plane
@@ -324,7 +433,7 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 			if (Size.Y > 1.0)
 			{
 				const double Aspect = Size.X / Size.Y;
-				const float VerticalFov = FovOverride > 0.f ? FovOverride : Rig.Fov;
+				const float VerticalFov = FovOverride > 0.f ? FovOverride : bGameCam ? GameCamFov : Rig.Fov;
 				const double Half = FMath::DegreesToRadians(VerticalFov * 0.5);
 				Camera->SetFieldOfView(float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(Half) * Aspect))));
 				UpdateLens(DeltaSeconds, Pos, Look, VerticalFov, Aspect);

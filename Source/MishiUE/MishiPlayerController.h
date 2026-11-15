@@ -74,6 +74,7 @@ private:
 		                                  // (the rasterizer's only adds its glow), its picture is about that much darker
 		bool bHud = false;
 		bool bHideHim = false;
+		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 	};
 	struct FSoundMark
 	{

@@ -5,6 +5,7 @@ Everything the Unity export gives is in Unity's space; ue_pos / ue_quat / ue_sca
 a Unity point (x, y, z) m lands at (-x, z, y) * 100 cm, a quaternion's vector part goes the same way.
 """
 import math
+import os
 
 import unreal
 
@@ -49,6 +50,56 @@ LOOK = {
     "path_tracing_bounces": 16,
     "path_tracing_max_intensity": 12.0,
 }
+
+# what a showcase on an open battle stage sets differently (the table above is the eros room's)
+LOOK_SHOWCASE = {
+    "outdoor": True,                    # the stage's directional light is the sun, on the stage and on her alike: no twin, no soft box
+    # The sun.  The game lights stage s01 from 73 degrees up (a flat noon light, baked) under a sky whose sun sits on the horizon.
+    # Here the light comes from where the sky picture has its sun (sky.json: 35 degrees to the right of the way she faces),
+    # raised to clear the castle's towers: rays from the play area say that from 30 degrees up she and the 5 m of carpet round
+    # her stand in the sun, and the towers' shadows fall across the far end.
+    "sun_azimuth": None,                # degrees, atan2(Y, X) of the way to the sun; None: the sky picture's
+    "sun_elevation": 32.0,
+    "sun_color": (1.0, 0.90, 0.76),     # linear: a low sun
+    "sun_intensity": 1.75,              # Unity's scale (x light_scale = lux): what a white surface facing it shows
+    "sun_scale": 1.0,
+    "sun_source_angle": 0.8,
+    "sun_shaft": 1.0,
+    "sun_on_characters": 0.0,
+    # A fill that goes with the camera and lights her alone (the bodies' lighting channel; no shadow, no bounce).  One sun
+    # cannot be her key everywhere: the battle stance faces 49 degrees off it, the showcase pose 22, and the skills' held
+    # poses turn their back on it (they are made for the game's camera behind her).  Unity's scale, as the sun's.
+    "camera_fill": 0.5,
+    "camera_fill_color": (1.0, 0.98, 0.95),
+    "camera_fill_angle": 24.0,          # degrees its source spans: a soft patch in the gold, not a flash's point
+    "lamp_scale": 1.5,
+    "sky_intensity": 0.7,               # the sky light: a capture of the sky sphere
+    "sky_cubemap": 512,                 # px a face of that capture (128 by default: a blur in polished gold)
+    "sky_tint": (1.0, 1.0, 1.0),
+    "sky_visible": 1.0,                 # x the sky picture's own radiance on the sphere
+    "exposure_bias": -0.7,
+    "fog_density": 0.02,
+    "fog_falloff": 0.02,
+    "fog_scattering": 1.0,
+    "fog_volume_distance": 8000.0,      # cm of volumetric fog: the stage is 60 m across
+    "fog_cutoff": 300000.0,             # cm: the haze is the stage's, the sky dome (10 km out) shows its picture
+    "vignette": 0.3,
+    "motion_blur": 0.35,                # a sword swung through a quarter turn in two frames of a 30 fps film
+    # polished metal: reflections are traced up to this roughness (Lumen's default 0.4 hands rougher gold to the blurred
+    # probes: the armour's gloss map runs 0.3 .. 0.7)
+    "lumen_max_roughness_to_trace": 0.65,
+}
+LOOK_BASE = dict(LOOK)
+
+
+def use_look(slice_data):
+    """The look of this slice's kind: the eros room's table, or it with the showcase's differences (one dict object: the
+    functions below read LOOK)."""
+    LOOK.clear()
+    LOOK.update(LOOK_BASE)
+    if (slice_data.get("kind") or "eros") == "showcase":
+        LOOK.update(LOOK_SHOWCASE)
+
 
 eal = unreal.EditorAssetLibrary
 mel = unreal.MaterialEditingLibrary
@@ -170,11 +221,28 @@ def light_common(c, L, color, warn, shaft=0.0, shadows=True, room=True, characte
     setp(c, "lighting_channels", lighting_channels(room, characters), warn)
 
 
-def place_lights(eas, lights, anchor, warn):
+def sun_design(sky):
+    """The showcase's own sun (LOOK's sun_elevation and so on): (rotation, colour, lux), or None where the stage's light stays."""
+    if LOOK.get("sun_elevation") is None:
+        return None
+    az = LOOK.get("sun_azimuth")
+    if az is None:
+        az = (sky or {}).get("sun_azimuth")
+    if az is None:
+        return None
+    az, el = math.radians(az), math.radians(LOOK["sun_elevation"])
+    to_sun = unreal.Vector(math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el))
+    c = LOOK.get("sun_color", (1.0, 1.0, 1.0))
+    return (unreal.MathLibrary.make_rot_from_x(to_sun * -1.0), unreal.LinearColor(c[0], c[1], c[2], 1.0),
+            LOOK.get("sun_intensity", 1.0) * LOOK["light_scale"])
+
+
+def place_lights(eas, lights, anchor, warn, sky=None):
     """The room's lights as a Lumen rig.  Unity's types and places are kept; what the game baked becomes real light."""
     n = 0
     k = LOOK["light_scale"]
     couple = anchor["position"]
+    design = sun_design(sky) if LOOK.get("outdoor") else None
     for L in lights:
         if not L.get("enabled", True):
             continue
@@ -185,15 +253,19 @@ def place_lights(eas, lights, anchor, warn):
         color = unreal.LinearColor(L["color"][0], L["color"][1], L["color"][2], 1.0)
         intensity = L["intensity"] * k
         baked = L.get("bake_type", "Baked") == "Baked"
-        if kind == "Directional" and baked:
+        outdoor = bool(LOOK.get("outdoor"))
+        if kind == "Directional" and (baked or outdoor):
+            if design:
+                rot, color, intensity = design
             a = spawn(eas, unreal.DirectionalLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.DirectionalLightComponent)
             setp(c, "intensity", intensity * LOOK["sun_scale"], warn)
             setp(c, "light_source_angle", LOOK["sun_source_angle"], warn)
             setp(c, "atmosphere_sun_light", False, warn)
             setp(c, "forward_shading_priority", 1, warn)          # this one is the sun of the fog and of translucent surfaces
-            light_common(c, L, color, warn, LOOK["sun_shaft"], characters=False)
-            if LOOK["sun_on_characters"] > 0.0:
+            # (under an open sky the sun is hers too; in the eros room it lights the room alone and a weaker twin lights the skin)
+            light_common(c, L, color, warn, LOOK["sun_shaft"], characters=outdoor)
+            if LOOK["sun_on_characters"] > 0.0 and not outdoor:
                 a2 = spawn(eas, unreal.DirectionalLight, pos, rot, L["name"] + "_Skin", "Mishi/Lights")
                 c2 = a2.get_component_by_class(unreal.DirectionalLightComponent)
                 setp(c2, "intensity", intensity * LOOK["sun_scale"] * LOOK["sun_on_characters"], warn)
@@ -272,24 +344,111 @@ def ensure_sky_material(masters_folder):
     return mat
 
 
-def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
+def ensure_sky_map_material(masters_folder, default_tex):
+    """The sky sphere showing a long-lat picture baked by Tools/mishi_sky.py: each pixel of the dome looks its own direction up
+    in it (u = atan2(Y, X) / 2 pi + 0.5, v = acos(Z) / pi - the rule the bake used), unlit, Is Sky for the sky light's capture.
+    default_tex: a linear texture for the parameter's default (the engine's own default is sRGB: with a Linear Color sampler the
+    material does not compile, the dome gets the default material and the sky stays black behind the fog)."""
+    path = masters_folder + "/M_Mishi_SkyMap"
+    if eal.does_asset_exist(path):
+        eal.delete_asset(path)
+    mat = asset_tools.create_asset("M_Mishi_SkyMap", masters_folder, unreal.Material, unreal.MaterialFactoryNew())
+    mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    mat.set_editor_property("two_sided", True)
+    mat.set_editor_property("is_sky", True)
+    cam = mel.create_material_expression(mat, unreal.MaterialExpressionCameraVectorWS, -1100, 0)
+    uv = mel.create_material_expression(mat, unreal.MaterialExpressionCustom, -850, 0)
+    uv.set_editor_property("code", "float3 d = normalize(-ToCamera);\nreturn float2(atan2(d.y, d.x) / 6.2831853 + 0.5, acos(clamp(d.z, -1.0, 1.0)) / 3.14159265);")
+    uv.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT2)
+    uv.set_editor_property("description", "direction -> long-lat")
+    ci = unreal.CustomInput()
+    ci.set_editor_property("input_name", "ToCamera")
+    uv.set_editor_property("inputs", [ci])
+    mel.connect_material_expressions(cam, "", uv, "ToCamera")
+    tex = mel.create_material_expression(mat, unreal.MaterialExpressionTextureSampleParameter2D, -550, 0)
+    tex.set_editor_property("parameter_name", "SkyMap")
+    if default_tex is not None:
+        tex.set_editor_property("texture", default_tex)
+    tex.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+    tex.set_editor_property("mip_value_mode", unreal.TextureMipValueMode.TMVM_MIP_LEVEL)      # (the u seam would pick a tiny mip)
+    mel.connect_material_expressions(uv, "", tex, "UVs")
+    k = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, -550, 300)
+    k.set_editor_property("parameter_name", "Scale")
+    k.set_editor_property("default_value", 8.0)
+    b = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, -550, 420)
+    b.set_editor_property("parameter_name", "Brightness")
+    b.set_editor_property("default_value", 1.0)
+    m1 = mel.create_material_expression(mat, unreal.MaterialExpressionMultiply, -250, 80)
+    m2 = mel.create_material_expression(mat, unreal.MaterialExpressionMultiply, -100, 160)
+    mel.connect_material_expressions(tex, "RGB", m1, "A")
+    mel.connect_material_expressions(k, "", m1, "B")
+    mel.connect_material_expressions(m1, "", m2, "A")
+    mel.connect_material_expressions(b, "", m2, "B")
+    mel.connect_material_property(m2, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    mel.recompile_material(mat)
+    eal.save_loaded_asset(mat)
+    return mat
+
+
+def import_sky_map(path, folder, warn):
+    """The 16-bit long-lat picture as a linear HDR texture, no mips to pick wrongly at the seam."""
+    name = "T_Sky_" + os.path.splitext(os.path.basename(path))[0]
+    t = unreal.AssetImportTask()
+    t.set_editor_property("filename", path)
+    t.set_editor_property("destination_path", folder)
+    t.set_editor_property("destination_name", name)
+    t.set_editor_property("automated", True)
+    t.set_editor_property("replace_existing", True)
+    t.set_editor_property("save", True)
+    asset_tools.import_asset_tasks([t])
+    tex = unreal.load_asset("%s/%s.%s" % (folder, name, name))
+    if tex is None:
+        warn("sky map %s did not import" % path)
+        return None
+    setp(tex, "srgb", False, warn)
+    setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_HDR, warn)
+    setp(tex, "mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS, warn)
+    setp(tex, "address_x", unreal.TextureAddress.TA_WRAP, warn)
+    setp(tex, "address_y", unreal.TextureAddress.TA_CLAMP, warn)
+    eal.save_loaded_asset(tex)
+    return tex
+
+
+def place_environment(eas, slice_data, materials_folder, slice_folder, warn, source_dir=None):
     rs = slice_data.get("render_settings") or {}
     post = slice_data.get("post") or {}
-    # the sky: the game's solid-colour sky box (warm tint x exposure) on a big sphere, lighting the room through its windows
-    sky_mat = ensure_sky_material(materials_folder)
     sphere = unreal.load_asset("/Engine/BasicShapes/Sphere.Sphere")
     sky = spawn(eas, unreal.StaticMeshActor, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), "SkySphere", "Mishi/Sky")
     sc = sky.get_editor_property("static_mesh_component")
     sc.set_static_mesh(sphere)
-    sky.set_actor_scale3d(unreal.Vector(400, 400, 400))            # a 100 cm sphere -> 400 m across
     setp(sc, "cast_shadow", False, warn)
     mi_path = slice_folder + "/Materials/MI_Sky"
     mi = unreal.load_asset(mi_path) if eal.does_asset_exist(mi_path) else asset_tools.create_asset(
         "MI_Sky", slice_folder + "/Materials", unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
-    mel.set_material_instance_parent(mi, sky_mat)
-    tint = rs.get("sky_tint") or [1.0, 0.77, 0.45, 1.0]
-    mel.set_material_instance_vector_parameter_value(mi, "Tint", unreal.LinearColor(srgb_to_linear(tint[0]), srgb_to_linear(tint[1]), srgb_to_linear(tint[2]), 1))
-    mel.set_material_instance_scalar_parameter_value(mi, "Exposure", rs.get("sky_exposure", 2.0))
+    sky_info = slice_data.get("sky") or {}
+    sky_file = os.path.join(source_dir, sky_info["file"]) if source_dir and sky_info.get("file") else None
+    if sky_file and os.path.isfile(sky_file):
+        # the stage's own sky: the game's skybox baked to a long-lat picture, on a dome far outside the stage; it is the picture
+        # behind everything and what the sky light captures.  Rays: Lumen's scene leaves an Is Sky mesh out by itself
+        # (r.RayTracing.ExcludeSky); the path tracer shows it to camera rays, and with no part in indirect light and no shadow
+        # the light of the sky comes from the sky light alone, once.
+        sky.set_actor_scale3d(unreal.Vector(20000, 20000, 20000))          # 10 km out
+        setp(sc, "affect_dynamic_indirect_lighting", False, warn)
+        setp(sc, "affect_distance_field_lighting", False, warn)
+        tex = import_sky_map(sky_file, slice_folder + "/Textures", warn)
+        mel.set_material_instance_parent(mi, ensure_sky_map_material(materials_folder, tex))
+        mel.clear_all_material_instance_parameters(mi)
+        if tex is not None:
+            mel.set_material_instance_texture_parameter_value(mi, "SkyMap", tex)
+        mel.set_material_instance_scalar_parameter_value(mi, "Scale", float(sky_info.get("scale", 8.0)))
+        mel.set_material_instance_scalar_parameter_value(mi, "Brightness", float(LOOK.get("sky_visible", 1.0)))
+    else:
+        # the eros rooms: the game's solid-colour sky box (warm tint x exposure) on a big sphere, lighting the room through its windows
+        sky.set_actor_scale3d(unreal.Vector(400, 400, 400))            # a 100 cm sphere -> 400 m across
+        mel.set_material_instance_parent(mi, ensure_sky_material(materials_folder))
+        tint = rs.get("sky_tint") or [1.0, 0.77, 0.45, 1.0]
+        mel.set_material_instance_vector_parameter_value(mi, "Tint", unreal.LinearColor(srgb_to_linear(tint[0]), srgb_to_linear(tint[1]), srgb_to_linear(tint[2]), 1))
+        mel.set_material_instance_scalar_parameter_value(mi, "Exposure", rs.get("sky_exposure", 2.0))
     mel.update_material_instance(mi)
     eal.save_loaded_asset(mi)
     sc.set_material(0, mi)
@@ -298,6 +457,11 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
     lc.set_mobility(unreal.ComponentMobility.MOVABLE)
     setp(lc, "real_time_capture", True, warn)
     setp(lc, "intensity", LOOK["sky_intensity"], warn)
+    if LOOK.get("sky_cubemap"):
+        setp(lc, "cubemap_resolution", int(LOOK["sky_cubemap"]), warn)      # what polished metal mirrors of the sky
+    if LOOK.get("sky_tint"):
+        st = LOOK["sky_tint"]
+        setp(lc, "light_color", unreal.Color(r=int(min(st[0], 1.0) * 255), g=int(min(st[1], 1.0) * 255), b=int(min(st[2], 1.0) * 255), a=255), warn)
     # the room's haze
     if rs.get("fog", False):
         fog = spawn(eas, unreal.ExponentialHeightFog, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), "Fog", "Mishi/Sky")
@@ -309,17 +473,21 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
         setp(fc, "fog_inscattering_luminance", unreal.LinearColor(srgb_to_linear(col[0]) * f, srgb_to_linear(col[1]) * f, srgb_to_linear(col[2]) * f, 1), warn)
         setp(fc, "enable_volumetric_fog", True, warn)
         setp(fc, "volumetric_fog_scattering_distribution", 0.7, warn)       # forward scattering: shafts glow towards the light
-        setp(fc, "volumetric_fog_albedo", unreal.Color(255, 244, 232, 255), warn)
+        setp(fc, "volumetric_fog_albedo", unreal.Color(r=255, g=244, b=232, a=255), warn)
         setp(fc, "volumetric_fog_extinction_scale", 1.0, warn)
-        setp(fc, "volumetric_fog_distance", 2500.0, warn)
+        setp(fc, "volumetric_fog_distance", LOOK.get("fog_volume_distance", 2500.0), warn)
+        if LOOK.get("fog_cutoff"):
+            # the haze ends before the sky dome: at 10 km it would be nothing but fog colour
+            setp(fc, "fog_cutoff_distance", LOOK["fog_cutoff"], warn)
     # post-processing: the game's ACES look is Unreal's own tonemapper; its bloom numbers; a fixed exposure
     ppv = spawn(eas, unreal.PostProcessVolume, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), "Post", "Mishi/Sky")
     setp(ppv, "unbound", True, warn)
     s = ppv.get_editor_property("settings")
     pairs = [("auto_exposure_method", unreal.AutoExposureMethod.AEM_MANUAL), ("auto_exposure_apply_physical_camera_exposure", False),
              ("auto_exposure_bias", LOOK["exposure_bias"]), ("bloom_intensity", post.get("bloom_intensity", 0.6)),
-             ("bloom_threshold", post.get("bloom_threshold", 0.55)), ("vignette_intensity", 0.25), ("scene_fringe_intensity", 0.25),
-             ("motion_blur_amount", 0.0),
+             ("bloom_threshold", post.get("bloom_threshold", 0.55)), ("vignette_intensity", LOOK.get("vignette", 0.25)),
+             ("scene_fringe_intensity", post.get("chromatic", 0.25)),
+             ("motion_blur_amount", LOOK.get("motion_blur", 0.0)),
              ("lumen_ray_lighting_mode", {"surface_cache": unreal.LumenRayLightingModeOverride.SURFACE_CACHE,
                                           "reflections": unreal.LumenRayLightingModeOverride.HIT_LIGHTING_FOR_REFLECTIONS,
                                           "hit": unreal.LumenRayLightingModeOverride.HIT_LIGHTING}.get(
@@ -334,6 +502,8 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn):
              ("path_tracing_max_path_intensity", LOOK["path_tracing_max_intensity"]),
              ("path_tracing_enable_denoiser", True),
              ("path_tracing_enable_reference_dof", True)]
+    if LOOK.get("lumen_max_roughness_to_trace") is not None:
+        pairs.append(("lumen_max_roughness_to_trace_reflections", LOOK["lumen_max_roughness_to_trace"]))
     for k, v in pairs:
         try:
             s.set_editor_property("override_" + k, True)
@@ -353,6 +523,17 @@ def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, h
     setp(a, "her_clips", her_anims, warn)
     setp(a, "his_clips", his_anims, warn)
     setp(a, "sounds", sounds, warn)
+    if (slice_data.get("kind") or "eros") != "eros":
+        try:
+            a.set_editor_property("b_skin_state", False)       # no blush and sweat following phases that are buttons here
+        except Exception:
+            pass
+    if LOOK.get("camera_fill"):
+        # the fill that goes with the camera (the camera pawn makes it): what a white surface facing it shows -> lux
+        c = LOOK.get("camera_fill_color", (1.0, 1.0, 1.0))
+        setp(a, "camera_fill", LOOK["camera_fill"] * LOOK["light_scale"], warn)
+        setp(a, "camera_fill_color", unreal.LinearColor(c[0], c[1], c[2], 1.0), warn)
+        setp(a, "camera_fill_angle", LOOK.get("camera_fill_angle", 24.0), warn)
     for prop, value in (("skin_state", masters.get("MPC")), ("his_body_skin", instances.get("pc_a00_nk_body")),
                         ("his_body_silhouette", instances.get("pc_a00_UnlitSilhouette"))):
         if value is not None:
@@ -390,11 +571,12 @@ def space_check(check_mesh, room_actors, warn):
 
 
 def build_level(map_path, slice_name, slice_text, slice_data, placements, meshes, instances, masters, her, her_anims, him, his_anims, sounds,
-                check_mesh, warn):
+                check_mesh, warn, source_dir=None):
+    use_look(slice_data)
     les, eas = open_level(map_path)
     placed = place_room(eas, meshes, instances, placements, warn)
-    lights = place_lights(eas, slice_data.get("lights", []), slice_data["anchor"], warn)
-    place_environment(eas, slice_data, "/Game/Mishi/Materials", "/Game/Mishi/" + slice_name, warn)
+    lights = place_lights(eas, slice_data.get("lights", []), slice_data["anchor"], warn, slice_data.get("sky"))
+    place_environment(eas, slice_data, "/Game/Mishi/Materials", "/Game/Mishi/" + slice_name, warn, source_dir)
     couple = place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, his_anims, sounds, masters, instances, warn)
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
     try:
