@@ -26,6 +26,7 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 | `Tools/shots_lookdev.json` / `tour.json` / `shots_stills.json` | eros15_07 的检查图机位表 / 巡游片分镜表 / 路径追踪定格图机位表 |
 | `Tools/shots_<切片>.json` / `tour_<切片>.json` / `stills_<切片>.json` | 某个切片自己的三张表（有就用它，现在有 `a08_s01` 的） |
 | `Tools/sheet.py` / `tour_audio.py` | 检查图拼版 / 巡游片的音轨合成 |
+| `Tools/install_dlss.py` | 把 NVIDIA 的 DLSS 插件从它的 zip 装进本工程的 `Plugins/`（可选，见"画质选项"） |
 | `Tools/check_tracks.py` / `check_parents.py` | 体检：动作轨道里的阶梯、镜像骨骼、手腕错位（导入前，系统 Python）/ 丢了父级的材质实例（编辑器里跑） |
 | `Tools/film_scan.py` / `film_jitter.py` / `film_sheet.py` | 成片检查：被挡住的帧 / 帧间跳变 / 拼版 |
 | `Tools/make_showcase.py` / `mishi_sky.py` | 展示切片：Unity 导出的原始数据 → `slice.json`（含骨骼布料的配置、特效索引）/ 把舞台的天空盒烘焙成一张经纬图 |
@@ -296,6 +297,53 @@ Niagara 没法用脚本搭出来（Python 能碰到的接口几乎是空的）�
 自发光是 HDR（最高 58），在这个场景的曝光下 ×0.3（`FX_LOOK`）；粒子灯 ×0.8（`LOOK["fx_light_scale"]`）。
 路径追踪定格图里没有特效（它们不进光追场景）。
 
+## 画面风格：游戏 / 电影（`mishi_look.py` 的 `STYLE` / `STYLES`）
+
+风格是盖在 `LOOK` 表上面的一层，**建关卡时**生效（曝光、补光比例、暗角、调色都写进关卡的后期体积和灯里）：
+
+```powershell
+python Tools\ue_remote.py Tools\import_slice.py a08_s01 level                 # 默认风格 cinema
+python Tools\ue_remote.py Tools\import_slice.py a08_s01 level --style game    # 换回游戏风（或环境变量 MISHI_STYLE）
+```
+
+| | game（游戏原样） | cinema（用户 11-21："偏电影"） |
+|---|---|---|
+| 思路 | 明亮、均匀，皮肤压在影调曲线高处 | 低调：主光比补光强，身体有受光面和背光面 |
+| 曝光 | 蜜室 -1.1，展示 -0.7 | 蜜室 -1.4，展示 -1.1 |
+| 补光 | 蜜室 fill 0.35 / 天空板 0.10 / 天光 1.0；展示跟机补光 0.5 / 天光 0.7 | 0.25 / 0.08 / 0.8；0.3 / 0.62 |
+| 影调 | 引擎默认胶片曲线 | 斜率 0.92、趾部 0.57、肩部 0.30，对比 1.03，最深的暗部提一点（gamma 1.06：暗角是暗的不是死黑） |
+| 颜色 | — | 饱和度 0.93，高光偏暖 (1.04, 1, 0.95)、暗部偏冷 (0.95, 1, 1.06) |
+| 其它 | 暗角 0.25 / 0.3 | 暗角 0.42，胶片颗粒 0.18 |
+
+量出来（`Tools/measure_look.py`：画面亮度分位数、皮肤亮度；`Tools/ab_sheet.py` 把两个检查图文件夹拼成左右对比）：皮肤中位数基本不变（0.5–0.6），整幅画面中位数 0.49 → 0.36（a08），
+接近全黑的像素 3% → 6%（a08）、4% → 12%（蜜室全景）。`grade` 里的键就是引擎后期设置的名字，想加什么直接加。
+
+## 画质选项：TSR / DLSS（可选插件）
+
+默认是引擎自己的 TSR、100% 分辨率。装了 NVIDIA 的 DLSS 插件、显卡也支持时，面板上多出两个按钮：
+
+- **画质**：TSR → DLAA（原生分辨率，只用 DLSS 做抗锯齿）→ DLSS 质量（渲染 67% 宽度）→ 平衡（58%）→ 性能（50%）
+- **光线重建**（DLSS Ray Reconstruction）：Lumen 的反射和阴影改由 DLSS 的一个降噪器处理（只在 DLSS 开着时可用）
+
+```powershell
+# 安装（编辑器关着）：zip 是 NVIDIA 官方的 "DLSS 4.5 plugin for UE 5.8"（developer.nvidia.com/rtx/dlss，公开链接，1.2 GB；
+# 经代理很慢的话 curl 加 --noproxy "*"）
+python Tools\install_dlss.py E:\tools\ue_dlss\UE5.8_DLSS4.5Plugin_v8.9.0.zip
+powershell -File Tools\ue.ps1 cpp
+# 出图 / 录片 / 运行时指定
+powershell -File Tools\ue.ps1 play  -Slice a08_s01 -Upscale dlaa -RR
+powershell -File Tools\ue.ps1 shots -Slice a08_s01 -Tag x -Upscale quality      # tsr | dlaa | quality | balanced | performance
+```
+
+- 插件放在 `Plugins/`（**不进仓库**：NVIDIA 的二进制，按它的 RTX SDK 许可分发），`MishiUE.uproject` 里标成可选：没装照常编译运行，只有 TSR。
+- 游戏模块不依赖插件的模块：按名字找它 Blueprint 库的静态函数（`QueryDLSSSupport` / `EnableDLSS` / `EnableDLSSRR`）来调用，
+  分辨率档位就是 `r.ScreenPercentage`。`EnableDLSSRR` 自己知道要关掉哪些 Lumen 的降噪（并在关闭时恢复）。
+- `Config/DefaultEngine.ini`：`bAllowOTAUpdate=False`（不从应用里联网取新模型）、`bShowDLSSSDebugOnScreenMessages=False`（画面里不出调试字）。
+- 路径追踪的机位期间自动切回 TSR（路径追踪自己累积采样、自己降噪）。
+- 驱动里的 NGX 仍会在初始化时拉起若干 `nvngx_update.exe` 去联网查更新，可能一直挂着：`ue.ps1` 等的是引擎进程本身，
+  结束后把它拉起的这些进程清掉。
+- 帧生成（DLSS-G）没有接：还要装 Streamline 那几个插件（`install_dlss.py --frame-generation`），只对实时运行有意义。
+
 ## 操作
 
 | 输入 | 作用 |
@@ -371,6 +419,12 @@ Niagara 没法用脚本搭出来（Python 能碰到的接口几乎是空的）�
   只有一两个轴为负的是真镜像，保留并报警。查法：`female_anim.bin` 里找缩放为负的骨骼，对比骨架参考姿势的缩放。
 - 出图 / 录片的 `-game` 进程也开着 Python 远程执行：它在跑的时候 `ue_remote.py` 可能连到它而不是编辑器
   （报 `module 'unreal' has no attribute 'CustomMaterialOutputType'` 之类缺编辑器类的错）。等出图进程结束再导入。
+- **特效材质第一次被画时会漏**：引擎可能还在给它建管线状态，这几帧就不画——技能 1 的第一刀在出图里时有时无地缺一串火花，
+  画面渲染得快的时候（DLSS 质量档）整帧特效都没有。开场时 `FMishiFx::Prewarm` 用每个特效材质各画一个半毫米的三角形（24 帧）。
+- **出图进程的日志窗口被点一下，整个进程就暂停**（Windows 控制台的"快速编辑"：标题变成"选择 ..."，写日志的线程卡住）。
+  `ue.ps1` 不再带 `-log`（没有控制台窗口，日志照样在 `Saved\Logs`）。
+- PowerShell 的 `Start-Process -Wait` 等的是**整个进程树**：引擎拉起的子进程不退出它就一直等（DLSS 的 `nvngx_update.exe`）。
+  改成 `-PassThru` 之后 `$p.WaitForExit()`（先取一次 `$p.Handle`，否则退出码读不到）。
 - **机位跳进技能中段马上拍，特效是空的**：引擎默认等一个网格的管线状态（PSO）编译好才开始画它，头几帧没有。
   出图 / 录片的进程带 `r.PSOPrecache.ProxyCreationStrategy=0`、`r.AsyncPipelineCompile=0`（`ue.ps1` 的 `$Capture`）；
   正常运行不受影响（特效在技能开始 0.7 秒后才出现，那时早编译好了）。

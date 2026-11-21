@@ -17,7 +17,9 @@ param(
     [string]$Tag = '',
     [int]$ResX = 1600,
     [int]$ResY = 900,
-    [switch]$KeepFrames
+    [switch]$KeepFrames,
+    [ValidateSet('', 'tsr', 'dlaa', 'quality', 'balanced', 'performance')] [string]$Upscale = '',
+    [switch]$RR
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -84,10 +86,21 @@ if ($text -notmatch [regex]::Escape($want)) {
 # and a mesh is drawn from the frame it appears in (the engine otherwise holds it back until its pipeline states are compiled:
 # a shot that jumps into the middle of a skill had none of the skill's effects in it)
 $Capture = '-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0,r.ScreenPercentage=100,r.PSOPrecache.ProxyCreationStrategy=0,r.AsyncPipelineCompile=0'
+# the picture's upscaler: -Upscale dlaa | quality | balanced | performance (NVIDIA's DLSS, Tools/install_dlss.py) or tsr; -RR = ray reconstruction
+$Picture = "$(if ($Upscale) { " -MishiUpscale=$Upscale" })$(if ($RR) { ' -MishiRR' })"
+
 
 function Invoke-Editor([string]$arguments, [string]$label) {
     Write-Host "$label ..."
-    $p = Start-Process -FilePath $Editor -ArgumentList $arguments -PassThru -Wait
+    # (not -Wait: that waits for every process the engine started as well - with NVIDIA's DLSS plugin loaded the driver's
+    # nvngx_update.exe helpers, which look for new DLSS models over the network and can sit there for good)
+    $p = Start-Process -FilePath $Editor -ArgumentList $arguments -PassThru
+    $null = $p.Handle
+    $p.WaitForExit()
+    $helpers = @(Get-CimInstance Win32_Process -Filter "Name='nvngx_update.exe'" -ErrorAction SilentlyContinue)
+    $ours = @($p.Id)
+    for ($round = 0; $round -lt 3; $round++) { $ours += @($helpers | Where-Object { $ours -contains $_.ParentProcessId } | ForEach-Object { $_.ProcessId }) }
+    $helpers | Where-Object { $ours -contains $_.ProcessId } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Write-Host "$label exit code $($p.ExitCode); log $Root\Saved\Logs\MishiUE.log"
     return $p.ExitCode
 }
@@ -130,7 +143,7 @@ switch ($Do) {
         exit $code
     }
     'play' {
-        Start-Process -FilePath $Editor -ArgumentList "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -log"
+        Start-Process -FilePath $Editor -ArgumentList "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY$Picture"
     }
     'tour' {
         # the film: Tools\tour.json (or -Shots <file>), every frame of every shot -> out\<slice>_tour[_<tag>].mp4.  The game
@@ -138,7 +151,7 @@ switch ($Do) {
         if (-not $Shots) { $Shots = Get-ShotList 'tour' 'tour.json' }
         $frames = Join-Path $Root "Saved\MishiTour\$Slice"
         if (Test-Path $frames) { Remove-Item -Recurse -Force $frames }
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended -log" 'tour'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiTour -MishiShots=`"$Shots`" -MishiShotsDir=`"$frames`" -nosound -nosplash -unattended$Picture" 'tour'
         $out = Join-Path $Root 'out'
         New-Item -ItemType Directory -Force $out | Out-Null
         $mp4 = Join-Path $out "${Slice}_tour$(if ($Tag) { '_' + $Tag }).mp4"
@@ -164,7 +177,7 @@ switch ($Do) {
         if (-not $PSBoundParameters.ContainsKey('ResY')) { $ResY = 1440 }
         $dir = Join-Path $Root "out\stills\$Slice$(if ($Tag) { '_' + $Tag })"
         New-Item -ItemType Directory -Force $dir | Out-Null
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'stills'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended$Picture" 'stills'
         & python (Join-Path $Root 'Tools\sheet.py') $dir --cols 3 --width 853
         Get-ChildItem $dir -Filter *.png | ForEach-Object { $_.FullName }
         exit $code
@@ -174,7 +187,7 @@ switch ($Do) {
         if (-not $Shots) { $Shots = Get-ShotList 'shots' 'shots_lookdev.json' }
         $dir = Join-Path $Root "Saved\MishiShots\$Slice$(if ($Tag) { '_' + $Tag })"
         if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
-        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended -log" 'shots'
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended$Picture" 'shots'
         Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
         exit $code
     }

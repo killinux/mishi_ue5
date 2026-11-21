@@ -23,6 +23,81 @@
 #include "ShaderCompiler.h"
 #endif
 
+namespace
+{
+	// NVIDIA's DLSS plugin, reached by name: the project builds and runs without it.  Its Blueprint library has static
+	// functions for what is wanted here (and EnableDLSSRR knows which of Lumen's own denoisers to put aside and bring back).
+	UFunction* DlssFunction(const TCHAR* Name, UObject*& OutObject)
+	{
+		UClass* Lib = FindObject<UClass>(nullptr, TEXT("/Script/DLSSBlueprint.DLSSLibrary"));
+		OutObject = Lib ? Lib->GetDefaultObject() : nullptr;
+		return Lib ? Lib->FindFunctionByName(Name) : nullptr;
+	}
+
+	/** QueryDLSSSupport / QueryDLSSRRSupport: an enum whose first value says "supported". */
+	bool DlssSupported(const TCHAR* Query)
+	{
+		UObject* O = nullptr;
+		UFunction* F = DlssFunction(Query, O);
+		const FProperty* Ret = F ? F->GetReturnProperty() : nullptr;
+		if (!O || !Ret || F->ParmsSize <= 0)
+			return false;
+		uint8* Parms = static_cast<uint8*>(FMemory_Alloca(F->ParmsSize));
+		FMemory::Memset(Parms, 0xff, F->ParmsSize);
+		O->ProcessEvent(F, Parms);
+		return Parms[Ret->GetOffset_ForUFunction()] == 0;
+	}
+
+	/** EnableDLSS / EnableDLSSRR (bool bEnabled). */
+	void DlssEnable(const TCHAR* Name, bool bOn)
+	{
+		UObject* O = nullptr;
+		UFunction* F = DlssFunction(Name, O);
+		const FBoolProperty* Arg = F ? CastField<FBoolProperty>(F->FindPropertyByName(TEXT("bEnabled"))) : nullptr;
+		if (!O || !Arg)
+			return;
+		uint8* Parms = static_cast<uint8*>(FMemory_Alloca(F->ParmsSize));
+		FMemory::Memzero(Parms, F->ParmsSize);
+		Arg->SetPropertyValue_InContainer(Parms, bOn);
+		O->ProcessEvent(F, Parms);
+	}
+}
+
+bool AMishiPlayerController::HasDLSS()
+{
+	return DlssSupported(TEXT("QueryDLSSSupport"));
+}
+
+bool AMishiPlayerController::HasRayReconstruction()
+{
+	return DlssSupported(TEXT("QueryDLSSRRSupport"));
+}
+
+void AMishiPlayerController::SetUpscale(int32 Mode)
+{
+	// what DLSS renders of the picture's width: all of it (DLAA: its anti-aliasing alone), two thirds, 58 %, half
+	static const float Percent[] = {100.f, 100.f, 66.7f, 58.f, 50.f};
+	Mode = FMath::Clamp(Mode, 0, int32(UE_ARRAY_COUNT(Percent)) - 1);
+	if (Mode > 0 && !HasDLSS())
+		Mode = 0;
+	DlssEnable(TEXT("EnableDLSS"), Mode > 0);
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
+		Var->Set(Percent[Mode], ECVF_SetByCode);
+	Upscale = Mode;
+	if (Mode == 0)
+		bRayReconstruction = false;         // (the plugin puts it out with DLSS)
+	UE_LOG(LogMishi, Log, TEXT("upscale: %s, %.0f %% of the picture rendered%s"), Mode == 0 ? TEXT("TSR") : Mode == 1 ? TEXT("DLAA") : TEXT("DLSS"), Percent[Mode],
+		bRayReconstruction ? TEXT(", ray reconstruction") : TEXT(""));
+}
+
+void AMishiPlayerController::SetRayReconstruction(bool bOn)
+{
+	bOn = bOn && Upscale > 0 && HasRayReconstruction();
+	DlssEnable(TEXT("EnableDLSSRR"), bOn);
+	bRayReconstruction = bOn;
+	UE_LOG(LogMishi, Log, TEXT("ray reconstruction: %s"), bOn ? TEXT("on") : TEXT("off"));
+}
+
 AMishiPlayerController::AMishiPlayerController()
 {
 	bShowMouseCursor = true;
@@ -50,6 +125,36 @@ void AMishiPlayerController::BeginPlay()
 		Viewport->AddViewportWidgetContent(Hud.ToSharedRef(), 10);
 	}
 	FString ShotsFile;
+	// the picture's upscaler from the command line (captures: Tools/ue.ps1 -Upscale dlaa -RR)
+	FString UpscaleName;
+	if (FParse::Value(FCommandLine::Get(), TEXT("MishiUpscale="), UpscaleName))
+	{
+		static const TCHAR* Names[] = {TEXT("tsr"), TEXT("dlaa"), TEXT("quality"), TEXT("balanced"), TEXT("performance")};
+		int32 Picked = INDEX_NONE;
+		for (int32 I = 0; I < UE_ARRAY_COUNT(Names); ++I)
+			if (UpscaleName.Equals(Names[I], ESearchCase::IgnoreCase))
+				Picked = I;
+		if (Picked == INDEX_NONE)
+		{
+			UE_LOG(LogMishi, Warning, TEXT("-MishiUpscale=%s: not one of tsr, dlaa, quality, balanced, performance"), *UpscaleName);
+		}
+		else if (Picked > 0 && !HasDLSS())
+		{
+			UE_LOG(LogMishi, Warning, TEXT("-MishiUpscale=%s: no DLSS here (the plugin is not installed, or the card or its driver cannot)"), *UpscaleName);
+		}
+		else
+		{
+			SetUpscale(Picked);
+		}
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("MishiRR")))
+	{
+		SetRayReconstruction(true);
+		if (!bRayReconstruction)
+		{
+			UE_LOG(LogMishi, Warning, TEXT("-MishiRR: ray reconstruction needs DLSS on (-MishiUpscale=dlaa ...) and a card that can"));
+		}
+	}
 	if (FParse::Value(FCommandLine::Get(), TEXT("MishiShots="), ShotsFile))
 		StartShots(ShotsFile);
 }
@@ -318,6 +423,10 @@ void AMishiPlayerController::BeginStill(const FShot& S)
 		// (the skills' effects are not in the ray tracing scene: their lights go out with them)
 		if (AMishiCouple* C = Couple.Get())
 			C->SetFxHidden(true);
+		// (and no DLSS over a picture that adds up samples: the path tracer has its own denoiser)
+		StillUpscale = Upscale + (bRayReconstruction ? 100 : 0);
+		if (Upscale > 0)
+			SetUpscale(0);
 	}
 	else
 		StillFrames = FMath::Max(1, FMath::RoundToInt(S.Hold * 30.f));
@@ -335,6 +444,11 @@ void AMishiPlayerController::EndStill()
 		ConsoleCommand(TEXT("r.PathTracing.ProgressDisplay 1"));
 		if (AMishiCouple* C = Couple.Get())
 			C->SetFxHidden(false);
+		if (StillUpscale % 100 > 0)
+		{
+			SetUpscale(StillUpscale % 100);
+			SetRayReconstruction(StillUpscale >= 100);
+		}
 	}
 	bStillPathTraced = false;
 	HoldScene(false);

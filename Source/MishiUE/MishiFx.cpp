@@ -204,6 +204,7 @@ void FMishiFx::Play(const FString& Action, float AtSeconds, UProceduralMeshCompo
 	if (Index == INDEX_NONE || !Mesh)
 		return;
 	Mesh->ClearAllMeshSections();
+	WarmFrames = 0;
 	FMishiFxAction& A = Actions[Index];
 	int32 Section = 0, Missing = 0;
 	for (FMishiFxBatch& Bt : A.Batches)
@@ -232,6 +233,35 @@ void FMishiFx::Play(const FString& Action, float AtSeconds, UProceduralMeshCompo
 	Current = Index;
 	Clock = FMath::Max(AtSeconds, 0.f);
 	Drawn = -1;
+}
+
+void FMishiFx::Prewarm(UProceduralMeshComponent* Mesh, const TArray<TObjectPtr<UMaterialInterface>>& Materials, const FVector& At)
+{
+	if (!Mesh || Current != INDEX_NONE || Materials.Num() == 0)
+		return;
+	Mesh->ClearAllMeshSections();
+	// (half a millimetre: under a pixel, but a draw all the same)
+	const TArray<FVector> Corners = {At, At + FVector(0.05, 0.0, 0.0), At + FVector(0.0, 0.05, 0.0)};
+	const TArray<int32> Triangle = {0, 1, 2};
+	const TArray<FVector> Normals = {FVector::UpVector, FVector::UpVector, FVector::UpVector};
+	const TArray<FVector2D> UVs = {FVector2D(0.5, 0.5), FVector2D(0.5, 0.5), FVector2D(0.5, 0.5)};
+	const TArray<FColor> Colours = {FColor::White, FColor::White, FColor::White};
+	const TArray<FProcMeshTangent> Tangents = {FProcMeshTangent(1.f, 0.f, 0.f), FProcMeshTangent(1.f, 0.f, 0.f), FProcMeshTangent(1.f, 0.f, 0.f)};
+	int32 Section = 0;
+	for (const TObjectPtr<UMaterialInterface>& Material : Materials)
+		if (Material)
+		{
+			Mesh->CreateMeshSection(Section, Corners, Triangle, Normals, UVs, UVs, UVs, UVs, Colours, Tangents, false);
+			Mesh->SetMaterial(Section, Material);
+			++Section;
+		}
+	WarmFrames = 24;
+}
+
+void FMishiFx::Warm(UProceduralMeshComponent* Mesh)
+{
+	if (WarmFrames > 0 && --WarmFrames == 0 && Current == INDEX_NONE && Mesh)
+		Mesh->ClearAllMeshSections();
 }
 
 void FMishiFx::Stop(UProceduralMeshComponent* Mesh, const TArray<UPointLightComponent*>& Lights)

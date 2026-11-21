@@ -43,6 +43,8 @@ importlib.reload(mishi_anim)
 importlib.reload(mishi_materials)
 importlib.reload(mishi_fx)
 importlib.reload(mishi_look)
+if "--style" in sys.argv and sys.argv.index("--style") + 1 < len(sys.argv):
+    mishi_look.STYLE = sys.argv[sys.argv.index("--style") + 1]             # the picture's style: game / cinema (mishi_look.STYLES)
 
 FFMPEG = r"D:\Program Files\ffmpeg\bin\ffmpeg.exe"
 HQ_CACHE = os.environ.get("ROE_HQ_CACHE", r"E:\game_export\RiseOfEros\_meta\_hq_materials")

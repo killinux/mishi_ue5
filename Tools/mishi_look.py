@@ -94,14 +94,45 @@ LOOK_SHOWCASE = {
 }
 LOOK_BASE = dict(LOOK)
 
+# The style: how the picture is exposed and graded, laid over the tables above when a level is built.
+#   game    the tables as they are - bright and even, skin high on the tone curve: how the game shows its scenes
+#   cinema  a lower key (user 11-21: "偏电影").  Less fill against the key, so that a body has a lit side and a side in shade;
+#           the exposure down until skin in the key sits about a stop over middle grey instead of two; a film curve with more
+#           toe and shoulder (the shadows fall off softly, a highlight keeps its colour longer); a little less colour, warm
+#           lights over cool shadows; grain; a darker corner.  "grade" = post-process settings by their engine names.
+# `import_slice.py <slice> level --style game` builds a level the other way (MISHI_STYLE in the environment does too).
+STYLE = os.environ.get("MISHI_STYLE", "cinema")
+CINEMA_GRADE = {
+    "film_slope": 0.92, "film_toe": 0.57, "film_shoulder": 0.30,
+    "color_saturation": (0.93, 0.93, 0.93, 1.0),
+    "color_contrast": (1.03, 1.03, 1.03, 1.0),
+    "color_gain_shadows": (0.95, 1.0, 1.06, 1.0),
+    "color_gamma_shadows": (1.06, 1.06, 1.06, 1.0),        # the deepest shadows a little open: a dark corner, not a black one
+    "color_gain_highlights": (1.04, 1.0, 0.95, 1.0),
+    "film_grain_intensity": 0.18,
+}
+STYLES = {
+    "game": {"eros": {}, "showcase": {}},
+    "cinema": {
+        "eros": {"exposure_bias": -1.4, "fill_scale": 0.25, "panel_scale": 0.08, "sky_intensity": 0.8, "vignette": 0.42, "grade": CINEMA_GRADE},
+        "showcase": {"exposure_bias": -1.1, "camera_fill": 0.3, "sky_intensity": 0.62, "vignette": 0.42, "grade": CINEMA_GRADE},
+    },
+}
 
-def use_look(slice_data):
-    """The look of this slice's kind: the eros room's table, or it with the showcase's differences (one dict object: the
-    functions below read LOOK)."""
+
+def use_look(slice_data, style=None):
+    """The look of this slice's kind: the eros room's table, or it with the showcase's differences, and the style's on top
+    (one dict object: the functions below read LOOK)."""
+    kind = "showcase" if (slice_data.get("kind") or "eros") == "showcase" else "eros"
     LOOK.clear()
     LOOK.update(LOOK_BASE)
-    if (slice_data.get("kind") or "eros") == "showcase":
+    if kind == "showcase":
         LOOK.update(LOOK_SHOWCASE)
+    style = style or STYLE
+    if style not in STYLES:
+        raise ValueError("no style %r (there are: %s)" % (style, ", ".join(sorted(STYLES))))
+    LOOK.update(STYLES[style][kind])
+    LOOK["style"] = style
 
 
 eal = unreal.EditorAssetLibrary
@@ -507,6 +538,8 @@ def place_environment(eas, slice_data, materials_folder, slice_folder, warn, sou
              ("path_tracing_enable_reference_dof", True)]
     if LOOK.get("lumen_max_roughness_to_trace") is not None:
         pairs.append(("lumen_max_roughness_to_trace_reflections", LOOK["lumen_max_roughness_to_trace"]))
+    for k, v in sorted((LOOK.get("grade") or {}).items()):
+        pairs.append((k, unreal.Vector4(*v) if isinstance(v, (tuple, list)) else v))
     for k, v in pairs:
         try:
             s.set_editor_property("override_" + k, True)
@@ -592,5 +625,5 @@ def build_level(map_path, slice_name, slice_text, slice_data, placements, meshes
     room_actors = [a for a in eas.get_all_level_actors() if str(a.get_folder_path()) == "Mishi/Room"]
     check = space_check(check_mesh, room_actors, warn)
     les.save_current_level()
-    log("level %s: %d placements, %d lights" % (map_path, placed, lights))
+    log("level %s: %d placements, %d lights, style %s" % (map_path, placed, lights, LOOK.get("style")))
     return {"map": map_path, "placed": placed, "lights": lights, "couple": couple.get_name() if couple else None, "space_check": check}

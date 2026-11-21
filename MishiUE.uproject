@@ -29,6 +29,16 @@
 		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": false
+		},
+		{
+			"Name": "DLSS",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "StreamlineNGXCommon",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

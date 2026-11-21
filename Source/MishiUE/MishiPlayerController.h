@@ -16,6 +16,17 @@ class MISHIUE_API AMishiPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	/** The picture's upscaler: 0 the engine's TSR at full size, 1 DLAA, 2 DLSS quality, 3 balanced, 4 performance.  1-4 are
+	    NVIDIA's DLSS (Plugins/DLSS - optional, Tools/install_dlss.py): without the plugin or a card that can, 0 stays. */
+	void SetUpscale(int32 Mode);
+	int32 GetUpscale() const { return Upscale; }
+	/** DLSS ray reconstruction: one trained denoiser for Lumen's reflections and the shadows instead of the engine's own
+	    (only with DLSS on: it runs in the same pass). */
+	void SetRayReconstruction(bool bOn);
+	bool GetRayReconstruction() const { return bRayReconstruction; }
+	static bool HasDLSS();
+	static bool HasRayReconstruction();
+
 	AMishiPlayerController();
 
 	AMishiCouple* GetCouple() const { return Couple.Get(); }
@@ -86,6 +97,8 @@ private:
 	};
 	TArray<FShot> Shots;
 	bool bShots = false;
+	int32 Upscale = 0;
+	bool bRayReconstruction = false;
 	int32 ShotIndex = -1;
 	float ShotClock = 0.f;
 	float ShotY = 0.5f, ShotZoom = 1.f;
@@ -98,6 +111,7 @@ private:
 	int32 StillStage = 0;                 // 0 none, 1 the scene is held for a still, 2 its picture is taken
 	int32 StillFrames = 0;                // frames left until the picture
 	bool bStillPathTraced = false;
+	int32 StillUpscale = 0;                 // the upscaler a path-traced still put aside
 	void BeginStill(const FShot& S);
 	void EndStill();
 	void HoldScene(bool bHold);

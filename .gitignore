@@ -21,3 +21,6 @@ out/
 
 # Python byte code
 __pycache__/
+
+# NVIDIA DLSS / Streamline plugins (Tools/install_dlss.py puts them here from NVIDIA's zip: theirs to distribute)
+Plugins/

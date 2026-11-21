@@ -172,6 +172,7 @@ void AMishiCouple::BeginPlay()
 	{
 		Fx.LightScale = FxLightScale;
 		Fx.Load(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Data.Effects));
+		Fx.Prewarm(FxMesh, FxMaterials, GetActorLocation() + FVector(0.0, 0.0, 100.0));
 	}
 	if (USoundBase* Bgm = FindSound(Data.MusicFile))
 	{
@@ -554,6 +555,7 @@ void AMishiCouple::SetFxHidden(bool bOut)
 
 void AMishiCouple::StepFx(float DeltaSeconds)
 {
+	Fx.Warm(FxMesh);
 	if (!Fx.IsPlaying())
 		return;
 	TArray<UPointLightComponent*> LightList;

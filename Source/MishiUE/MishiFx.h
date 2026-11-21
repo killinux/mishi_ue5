@@ -49,6 +49,11 @@ public:
 	int32 NumActions() const { return Actions.Num(); }
 	void Play(const FString& Action, float AtSeconds, UProceduralMeshComponent* Mesh, const TArray<TObjectPtr<UMaterialInterface>>& Materials);
 	void Stop(UProceduralMeshComponent* Mesh, const TArray<UPointLightComponent*>& Lights);
+	/** A speck of every effect material, drawn for a few frames at the start.  The first time a material is drawn the engine
+	    may still be building its pipeline state: a skill's first slash was missing from a capture now and then (and all of
+	    its effects when the picture rendered fast). */
+	void Prewarm(UProceduralMeshComponent* Mesh, const TArray<TObjectPtr<UMaterialInterface>>& Materials, const FVector& At);
+	void Warm(UProceduralMeshComponent* Mesh);
 	bool IsPlaying() const { return Current != INDEX_NONE; }
 	float Time() const { return Clock; }
 	/** Advance by Dt and draw that frame.  Home: where the unit was placed; the camera: what faces it is turned to it. */
@@ -63,6 +68,7 @@ private:
 	int32 Current = INDEX_NONE;
 	float Clock = 0.f;
 	int32 Drawn = -1;                     // the frame the mesh shows
+	int32 WarmFrames = 0;
 	// scratch, kept between frames
 	TArray<FVector> V, N;
 	TArray<FVector2D> UV0, UV1, UV2, UV3;

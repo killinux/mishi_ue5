@@ -6,6 +6,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
@@ -56,7 +57,8 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	Owner = InArgs._Owner;
 	SetVisibility(EVisibility::SelfHitTestInvisible);
 
-	TSharedRef<SHorizontalBox> Bar = SNew(SHorizontalBox);
+	// (a wrap box: a showcase's nine actions, the switches and the camera presets are wider than a 1600 px window)
+	TSharedRef<SWrapBox> Bar = SNew(SWrapBox).UseAllottedSize(true).HAlign(HAlign_Center);
 	// a button per phase of the slice (the eros mode's four, a showcase's actions under their own names): those the slice has
 	for (int32 I = 0; I < 10; ++I)
 	{
@@ -77,7 +79,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 			const int32 N = C && C->IsReady() ? C->Slice().Phases.Num() : 4;
 			return I < N ? EVisibility::Visible : EVisibility::Collapsed;
 		}));
-		Bar->AddSlot().AutoWidth().Padding(3.f)[B];
+		Bar->AddSlot().Padding(3.f)[B];
 	}
 	// what only a couple's scene has: him, the blush
 	const TAttribute<EVisibility> CoupleOnly = TAttribute<EVisibility>::CreateLambda([this]()
@@ -85,7 +87,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 		const AMishiCouple* C = Couple();
 		return !C || !C->IsReady() || C->Slice().bMale ? EVisibility::Visible : EVisibility::Collapsed;
 	});
-	Bar->AddSlot().AutoWidth().Padding(FMargin(14.f, 3.f, 3.f, 3.f))
+	Bar->AddSlot().Padding(FMargin(14.f, 3.f, 3.f, 3.f))
 	[
 		// "zi dong: kai / guan"
 		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
@@ -93,7 +95,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 			[this]() { if (AMishiCouple* C = Couple()) C->bAuto = !C->bAuto; },
 			[this]() { const AMishiCouple* C = Couple(); return C && C->bAuto; }, 96.f)
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		// "yu yin: ri / ying / guan"
 		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
@@ -101,7 +103,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				return L == 1 ? MISHI_TEXT("\u8BED\u97F3\uFF1A\u65E5") : L == 2 ? MISHI_TEXT("\u8BED\u97F3\uFF1A\u82F1") : MISHI_TEXT("\u8BED\u97F3\uFF1A\u5173"); }),
 			[this]() { if (AMishiCouple* C = Couple()) C->VoiceLanguage = (C->VoiceLanguage + 1) % 3; }, nullptr, 96.f)
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		SNew(SBox).Visibility(CoupleOnly)
 		[
@@ -112,14 +114,14 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 128.f)
 		]
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		// "yin xiao" - the parts' sound loops
 		Button(MISHI_TEXT("\u97F3\u6548"),
 			[this]() { if (AMishiCouple* C = Couple()) C->SetSfx(!C->bSfx); },
 			[this]() { const AMishiCouple* C = Couple(); return C && C->bSfx; }, 64.f)
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		SNew(SBox).Visibility(CoupleOnly)
 		[
@@ -135,7 +137,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 		const AMishiCouple* C = Couple();
 		return C && C->IsReady() && C->Slice().Kind == TEXT("showcase") ? EVisibility::Visible : EVisibility::Collapsed;
 	});
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		SNew(SBox).Visibility(ShowcaseOnly)
 		[
@@ -146,7 +148,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCameraPawn* P = Cam(); return P && P->bSkillCamera; }, 128.f)
 		]
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		SNew(SBox).Visibility(TAttribute<EVisibility>::CreateLambda([this]()
 			{ const AMishiCouple* C = Couple(); return C && C->IsReady() && C->HasSprings() ? EVisibility::Visible : EVisibility::Collapsed; }))
@@ -157,7 +159,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCouple* C = Couple(); return C && C->bSprings; }, 64.f)
 		]
 	];
-	Bar->AddSlot().AutoWidth().Padding(3.f)
+	Bar->AddSlot().Padding(3.f)
 	[
 		SNew(SBox).Visibility(TAttribute<EVisibility>::CreateLambda([this]()
 			{ const AMishiCouple* C = Couple(); return C && C->IsReady() && C->HasFx() ? EVisibility::Visible : EVisibility::Collapsed; }))
@@ -168,6 +170,39 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCouple* C = Couple(); return C && C->bFx; }, 64.f)
 		]
 	];
+	// "hua zhi" - the picture's upscaler: the engine's TSR, or NVIDIA's DLSS where its plugin is installed and the card can
+	// (DLAA = its anti-aliasing on the full picture; quality / balanced / performance render 67 / 58 / 50 % of the width);
+	// "guang xian chong jian" - DLSS ray reconstruction, one denoiser for Lumen's reflections and shadows
+	const bool bDlss = AMishiPlayerController::HasDLSS();
+	const bool bDlssRR = bDlss && AMishiPlayerController::HasRayReconstruction();
+	Bar->AddSlot().Padding(FMargin(14.f, 3.f, 3.f, 3.f))
+	[
+		SNew(SBox).Visibility(bDlss ? EVisibility::Visible : EVisibility::Collapsed)
+		[
+			Button(TAttribute<FText>::CreateLambda([this]()
+				{
+					switch (Owner.IsValid() ? Owner->GetUpscale() : 0)
+					{
+					case 1: return MISHI_TEXT("画质：DLAA");
+					case 2: return MISHI_TEXT("DLSS 质量");
+					case 3: return MISHI_TEXT("DLSS 平衡");
+					case 4: return MISHI_TEXT("DLSS 性能");
+					default: return MISHI_TEXT("画质：TSR");
+					}
+				}),
+				[this]() { if (Owner.IsValid()) { const bool bRR = Owner->GetRayReconstruction(); Owner->SetUpscale((Owner->GetUpscale() + 1) % 5); Owner->SetRayReconstruction(bRR); } },
+				[this]() { return Owner.IsValid() && Owner->GetUpscale() > 0; }, 124.f)
+		]
+	];
+	Bar->AddSlot().Padding(3.f)
+	[
+		SNew(SBox).Visibility(bDlssRR ? EVisibility::Visible : EVisibility::Collapsed)
+		[
+			Button(MISHI_TEXT("光线重建"),
+				[this]() { if (Owner.IsValid()) Owner->SetRayReconstruction(!Owner->GetRayReconstruction()); },
+				[this]() { return Owner.IsValid() && Owner->GetRayReconstruction(); }, 100.f)
+		]
+	];
 	// camera presets: "quan jing", "zheng mian", "ce mian", "fu shi", "te xie", "fu wei"
 	struct FPreset { const TCHAR* Label; int32 Kind; };
 	const FPreset Presets[] = {
@@ -175,7 +210,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	for (int32 I = 0; I < UE_ARRAY_COUNT(Presets); ++I)
 	{
 		const int32 Kind = Presets[I].Kind;
-		Bar->AddSlot().AutoWidth().Padding(FMargin(I == 0 ? 14.f : 3.f, 3.f, 3.f, 3.f))
+		Bar->AddSlot().Padding(FMargin(I == 0 ? 14.f : 3.f, 3.f, 3.f, 3.f))
 		[
 			Button(FText::FromString(Presets[I].Label), [this, Kind]()
 			{
@@ -238,7 +273,7 @@ void SMishiHud::Construct(const FArguments& InArgs)
 			})
 		]
 		+ SOverlay::Slot()
-		.HAlign(HAlign_Center)
+		.HAlign(HAlign_Fill)
 		.VAlign(VAlign_Bottom)
 		.Padding(12.f)
 		[
