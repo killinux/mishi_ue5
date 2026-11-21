@@ -26,6 +26,8 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 | `Tools/shots_lookdev.json` / `tour.json` / `shots_stills.json` | eros15_07 的检查图机位表 / 巡游片分镜表 / 路径追踪定格图机位表 |
 | `Tools/shots_<切片>.json` / `tour_<切片>.json` / `stills_<切片>.json` | 某个切片自己的三张表（有就用它，现在有 `a08_s01` 的） |
 | `Tools/sheet.py` / `tour_audio.py` | 检查图拼版 / 巡游片的音轨合成 |
+| `Tools/check_tracks.py` / `check_parents.py` | 体检：动作轨道里的阶梯、镜像骨骼、手腕错位（导入前，系统 Python）/ 丢了父级的材质实例（编辑器里跑） |
+| `Tools/film_scan.py` / `film_jitter.py` / `film_sheet.py` | 成片检查：被挡住的帧 / 帧间跳变 / 拼版 |
 | `Tools/make_showcase.py` / `mishi_sky.py` | 展示切片：Unity 导出的原始数据 → `slice.json`（含骨骼布料的配置、特效索引）/ 把舞台的天空盒烘焙成一张经纬图 |
 | `Tools/mishi_fx.py` | 技能特效的材质：游戏四个粒子着色器的母材质（代码生成）+ 每个游戏材质一个实例 |
 | `Config/` | 硬件光追 Lumen + 虚拟阴影、路径追踪、无烘焙光照、手动曝光、TSR 100%、SM6；默认地图和 GameMode；传统 FBX 导入；动画默认 60 fps；Python 远程执行 |
@@ -353,11 +355,12 @@ Niagara 没法用脚本搭出来（Python 能碰到的接口几乎是空的）�
   而带着前臂蒙皮的扭转骨骼 `ForeTwist` / `ForeTwist1` 挂在**上臂**下面、自己有平滑的曲线。于是手掌骨骼跟着停住的前臂走，
   前臂的皮跟着扭转骨骼走：旧轨道里手掌离前臂末端平均 1 cm、最大 8.8 cm，前臂骨和扭转骨最多差 21°——手腕被扯开、还一跳一跳。
   去掉阶梯后最大 0.13 cm / 0.3°。量法：在上臂空间里分别用"前臂 → 手"和"ForeTwist → ForeTwist1 → 末端"算手腕位置，求差。
+  `python Tools\check_tracks.py Import\<切片>` 一条命令出这三样：阶梯轨道数、负缩放骨骼、两只手腕的错位。
   女方同理（a08 和蜜室都已重新导出）。eros15_07 女方 445 条、男方 178 条骨骼轨道是阶梯的，脚趾一跳 50°、男方小腿一跳 24°。
 - **重建母材质后，别的切片整个变灰**：`mishi_materials.Graph` 原来是把母材质资产删掉再新建——所有切片里引用它的材质实例
   都丢了父级（没有父级的实例 = 引擎的灰色默认材质，带棋盘格），只有当时正在导入的那个切片被重新关联。
   a08 那次升级母材质版本之后，eros15_07 的 89 个实例里 87 个没有父级，一周后才发现。现在母材质**原地重建**
-  （清空节点重搭，资产不换），实例的父级一直在；检查：编辑器里数一遍 `parent is None` 的 `MaterialInstanceConstant`。
+  （清空节点重搭，资产不换），实例的父级一直在；检查：`python Tools\ue_remote.py Tools\check_parents.py`。
 - **出图 / 录片等着色器和资源编译完再开拍**（`StepShots` 开头）：材质的着色器还在编译时画出来的是灰色默认材质，
   贴图还在生成时是灰块；缓存是冷的（母材质刚重建、换了机器）时整部片子都是。
 - **右肩塌陷 = 一根镜像的辅助骨骼**：她两肩的三角肌各由一个辅助球骨骼撑着（`GeoSphere001` / `GeoSphere002`，挂在上臂下面，
