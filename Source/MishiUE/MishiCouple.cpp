@@ -529,6 +529,29 @@ void AMishiCouple::FireCues()
 	}
 }
 
+void AMishiCouple::SetFxHidden(bool bOut)
+{
+	if (FxMesh)
+		FxMesh->SetVisibility(!bOut);
+	if (bOut)
+	{
+		FxLightsHidden.Init(false, FxLights.Num());
+		for (int32 I = 0; I < FxLights.Num(); ++I)
+			if (FxLights[I] && FxLights[I]->IsVisible())
+			{
+				FxLightsHidden[I] = true;
+				FxLights[I]->SetVisibility(false);
+			}
+	}
+	else
+	{
+		for (int32 I = 0; I < FxLights.Num() && I < FxLightsHidden.Num(); ++I)
+			if (FxLights[I] && FxLightsHidden[I])
+				FxLights[I]->SetVisibility(true);
+		FxLightsHidden.Reset();
+	}
+}
+
 void AMishiCouple::StepFx(float DeltaSeconds)
 {
 	if (!Fx.IsPlaying())

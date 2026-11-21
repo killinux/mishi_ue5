@@ -76,6 +76,14 @@ public:
 	/** Seconds a faded thing stays away after it last stood in the way (the bodies move: without it a post would flicker). */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float SeeThroughHold = 1.2f;
+	/** A slender thing nearer to the lens than this (cm) fades, whether it hides the couple or not. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float NearFadeRadius = 45.f;
+	/** The lens as a ball of this radius (cm), pushed along the last LensReach cm of the way: what it meets, the camera stops before. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float LensClearance = 12.f;
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	float LensReach = 45.f;
 
 	/** A blow of a skill shakes the camera: cm of sway for a shake of amplitude 1 (the game's Cinemachine impulse). */
 	UPROPERTY(EditAnywhere, Category = "Mishi")

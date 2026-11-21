@@ -163,6 +163,9 @@ public:
 	const FMishiSlice& Slice() const { return Data; }
 	bool IsReady() const { return bReady; }
 	bool HasFx() const { return Fx.NumActions() > 0; }
+	/** The effects out of the picture and back again, lights and all (a path-traced still: their meshes are not in the ray
+	    tracing scene, and a glow on the floor from nothing is worse than none). */
+	void SetFxHidden(bool bOut);
 	bool HasSprings() const { return !Data.Springs.IsEmpty(); }
 	int32 CurrentPhase() const { return PhaseNow; }
 	FString CurrentPart() const;
@@ -207,6 +210,7 @@ private:
 	int32 CueIndex = 0;                   // the part's next cue
 	int32 AutoIndex = -1;                 // where the auto mode is in the slice's round
 	FMishiFx Fx;                          // the skills' baked effects
+	TArray<bool> FxLightsHidden;          // the lights SetFxHidden put out (lit again when the effects come back)
 	FTransform HomeXform;
 	bool bHome = false;
 	bool bMoving = false;                 // the unit is on its way (a timeline's move)

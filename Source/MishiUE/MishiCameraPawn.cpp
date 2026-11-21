@@ -1,4 +1,7 @@
 #include "MishiCameraPawn.h"
+#include "Engine/OverlapResult.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "MishiCouple.h"
 #include "MishiUE.h"
 #include "Camera/CameraComponent.h"
@@ -224,6 +227,47 @@ void AMishiCameraPawn::UpdateSeeThrough(float DeltaSeconds, const FVector& Pos)
 			}
 		}
 	}
+	if (bSeeThrough)
+	{
+		// ... and what the lens is about to brush past.  A slender thing does not stop the camera, so a drifting camera can pass
+		// a bed post at a few centimetres: no line to a body crosses it, and yet it sweeps over half the picture, dark and out
+		// of focus, for a quarter of a second (the film's p1_side shot).  Whatever slender stands within reach of the lens fades.
+		TArray<FOverlapResult> Near;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(MishiSeeThroughNear), true);
+		Params.AddIgnoredActor(this);
+		Params.AddIgnoredActor(C);
+		if (W->OverlapMultiByChannel(Near, Pos, FQuat::Identity, ECC_Camera, FCollisionShape::MakeSphere(NearFadeRadius), Params))
+			for (const FOverlapResult& O : Near)
+				if (UPrimitiveComponent* Comp = O.GetComponent())
+					if (IsSlender(Comp))
+						Between.Add(Comp);
+		// (-MishiCamDebug: what stands within 1.2 m of the lens, every few frames)
+		static const bool bDebug = FParse::Param(FCommandLine::Get(), TEXT("MishiCamDebug"));
+		if (bDebug && GFrameCounter % 3 == 0)
+		{
+			TArray<FOverlapResult> Around;
+			W->OverlapMultiByChannel(Around, Pos, FQuat::Identity, ECC_Camera, FCollisionShape::MakeSphere(120.f), Params);
+			Around.Sort([&Pos](const FOverlapResult& A, const FOverlapResult& B)
+			{
+				return A.GetComponent() && B.GetComponent()
+					&& A.GetComponent()->Bounds.ComputeSquaredDistanceFromBoxToPoint(Pos) < B.GetComponent()->Bounds.ComputeSquaredDistanceFromBoxToPoint(Pos);
+			});
+			FString Line;
+			TSet<const UPrimitiveComponent*> Seen;
+			for (const FOverlapResult& O : Around)
+				if (const UPrimitiveComponent* Comp = O.GetComponent())
+				{
+					if (Seen.Contains(Comp) || Seen.Num() >= 8)
+						continue;
+					Seen.Add(Comp);
+					const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Comp);
+					const FVector Size = Mesh && Mesh->GetStaticMesh() ? Mesh->GetStaticMesh()->GetBounds().BoxExtent * 2.0 * Mesh->GetComponentScale().GetAbs() : FVector::ZeroVector;
+					Line += FString::Printf(TEXT(" %s(%.0fx%.0fx%.0f%s d%.0f)"), Mesh && Mesh->GetStaticMesh() ? *Mesh->GetStaticMesh()->GetName() : *Comp->GetName(), Size.X, Size.Y, Size.Z,
+						IsSlender(Comp) ? TEXT(" slender") : TEXT(""), FMath::Sqrt(Comp->Bounds.ComputeSquaredDistanceFromBoxToPoint(Pos)));
+				}
+			UE_LOG(LogMishi, Log, TEXT("camdebug f%llu pos (%.0f %.0f %.0f) near %d between %d:%s"), GFrameCounter, Pos.X, Pos.Y, Pos.Z, Near.Num(), Between.Num(), *Line);
+		}
+	}
 	for (UPrimitiveComponent* Comp : Between)
 		Faded.FindOrAdd(Comp).Hold = SeeThroughHold;
 	for (auto It = Faded.CreateIterator(); It; ++It)
@@ -270,7 +314,7 @@ float AMishiCameraPawn::FreeFraction(const FVector& Target, const FVector& Pos) 
 	{
 		FHitResult Hit;
 		if (!W->LineTraceSingleByChannel(Hit, From, Pos, ECC_Camera, Params))
-			return 1.f;
+			break;
 		const double At = (Hit.Location - Target) | Dir;
 		const UPrimitiveComponent* Comp = Hit.GetComponent();
 		// a slender thing only passes through the picture (and fades where it hides the couple); a wall, a headboard or a
@@ -282,6 +326,25 @@ float AMishiCameraPawn::FreeFraction(const FVector& Target, const FVector& Pos) 
 			continue;
 		}
 		return float(FMath::Clamp((At - 12.0) / Dist, 0.08, 1.0));
+	}
+	// ... and what the lens itself would touch.  The line is thin: the drifting camera can come up behind the end of a board
+	// with the line still passing an inch beside it - the board fills a third of the picture, dark and out of focus, until
+	// the line meets it and the camera jumps in front (the film's p1_side shot, a quarter of a second).  A ball the size of
+	// the lens, pushed along the last stretch of the way, meets the board before it comes into the picture.
+	const double Stretch = FMath::Min(Dist - 20.0, double(LensReach));
+	for (int32 Step = 0; Step < 6 && Stretch > 5.0; ++Step)
+	{
+		FHitResult Hit;
+		if (!W->SweepSingleByChannel(Hit, Pos - Dir * Stretch, Pos, FQuat::Identity, ECC_Camera, FCollisionShape::MakeSphere(LensClearance), Params))
+			break;
+		const UPrimitiveComponent* Comp = Hit.GetComponent();
+		if (Comp && IsSlender(Comp))
+		{
+			Params.AddIgnoredComponent(Comp);           // (it fades: UpdateSeeThrough)
+			continue;
+		}
+		const double At = Hit.bStartPenetrating ? Dist - Stretch : ((Hit.ImpactPoint - Target) | Dir);
+		return float(FMath::Clamp((At - 12.0 - LensClearance) / Dist, 0.08, 1.0));
 	}
 	return 1.f;
 }

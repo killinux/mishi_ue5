@@ -74,6 +74,7 @@ private:
 		                                  // (the rasterizer's only adds its glow), its picture is about that much darker
 		bool bHud = false;
 		bool bHideHim = false;
+		bool bHideHer = false;                // "hide_her": him alone (looking at his hands, his wrists)
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
 	};
@@ -93,6 +94,7 @@ private:
 	FVector ShotDir = FVector::ForwardVector;  // from there to the camera, and the picture's up: the bone's axes in the world,
 	FVector ShotUp = FVector::UpVector;        // followed slowly (the camera does not swing with every nod of a head)
 	int32 ShotQuitFrames = 0;
+	int32 ShotWaitFrames = 0, ShotReadyFrames = 0;   // waiting for shaders and assets to be built before the first shot
 	int32 StillStage = 0;                 // 0 none, 1 the scene is held for a still, 2 its picture is taken
 	int32 StillFrames = 0;                // frames left until the picture
 	bool bStillPathTraced = false;

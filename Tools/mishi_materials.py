@@ -22,7 +22,7 @@ import os
 
 import unreal
 
-VERSION = 9
+VERSION = 10
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -52,16 +52,19 @@ class Graph:
     def __init__(self, name, shading=None, blend=None, two_sided=False):
         path = "%s/%s" % (MATS, name)
         if eal.does_asset_exist(path):
-            eal.delete_asset(path)
-        self.mat = asset_tools.create_asset(name, MATS, unreal.Material, unreal.MaterialFactoryNew())
+            # In place: the asset stays, its graph is emptied and built again.  Deleting it and making it anew left every
+            # instance of it without a parent - in every slice imported before, not only the one being imported - and a
+            # material instance without a parent is the engine's grey default material (a whole slice in grey, noticed a
+            # week later).  What a builder set on the material and no longer sets keeps its old value: set it back.
+            self.mat = unreal.load_asset(path)
+            mel.delete_all_material_expressions(self.mat)
+        else:
+            self.mat = asset_tools.create_asset(name, MATS, unreal.Material, unreal.MaterialFactoryNew())
         self.name = name
         self.rows = {}
-        if shading is not None:
-            setp(self.mat, "shading_model", shading)
-        if blend is not None:
-            setp(self.mat, "blend_mode", blend)
-        if two_sided:
-            setp(self.mat, "two_sided", True)
+        setp(self.mat, "shading_model", shading if shading is not None else unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
+        setp(self.mat, "blend_mode", blend if blend is not None else unreal.BlendMode.BLEND_OPAQUE)
+        setp(self.mat, "two_sided", bool(two_sided))
         setp(self.mat, "use_material_attributes", True)
         self.attrs = self.node(unreal.MaterialExpressionMakeMaterialAttributes, -200)
         mel.connect_material_property(self.attrs, "", MP.MP_MATERIAL_ATTRIBUTES)

@@ -18,6 +18,10 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
+#if WITH_EDITOR
+#include "AssetCompilingManager.h"
+#include "ShaderCompiler.h"
+#endif
 
 AMishiPlayerController::AMishiPlayerController()
 {
@@ -81,6 +85,7 @@ void AMishiPlayerController::StartShots(const FString& File)
 		O->TryGetStringField(TEXT("bone"), S.Bone);
 		O->TryGetBoolField(TEXT("hud"), S.bHud);
 		O->TryGetBoolField(TEXT("hide_him"), S.bHideHim);
+		O->TryGetBoolField(TEXT("hide_her"), S.bHideHer);
 		O->TryGetBoolField(TEXT("skill_cam"), S.bSkillCam);
 		bool bFlag = false;
 		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
@@ -140,6 +145,26 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	}
 	C->bAuto = false;
 	Cam->bLimits = false;
+#if WITH_EDITOR
+	// Nothing is shot before everything is built.  A material whose shaders are still compiling is drawn as the engine's grey
+	// default material and a texture still being built as a grey square - with a cold cache (the masters rebuilt since this
+	// slice was last drawn, another machine) a whole film of them.
+	if (ShotIndex < 0)
+	{
+		const int32 Shaders = GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : 0;
+		const int32 Assets = FAssetCompilingManager::Get().GetNumRemainingAssets();
+		if (Shaders > 0 || Assets > 0)
+		{
+			ShotReadyFrames = 0;
+			if (ShotWaitFrames++ % 150 == 0)
+				UE_LOG(LogMishi, Log, TEXT("shots: waiting for %d shader jobs and %d assets to be built"), Shaders, Assets);
+			return;
+		}
+		// (what was built asks for more: a texture brings its material in)
+		if (++ShotReadyFrames < 30)
+			return;
+	}
+#endif
 	if (StillStage == 1)
 	{
 		// the scene is held: nothing moves until the picture is taken
@@ -202,6 +227,8 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->SetHisStyle(S.HisStyle);
 		else
 			C->SetShowHim(!S.bHideHim);
+		if (C->GetHer() && C->GetHer()->IsVisible() == S.bHideHer)
+			C->GetHer()->SetVisibility(!S.bHideHer, true);
 		Cam->SetFovOverride(S.Fov);
 		bShotStart = true;
 		ShotY = S.Y < 0.f ? Cam->DefaultY() : S.Y;
@@ -220,8 +247,12 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	if (!S.Bone.IsEmpty() && C->GetHer())
 	{
 		const FName Bone(*S.Bone);
-		const FQuat Q = C->GetHer()->GetBoneQuaternion(Bone);
-		const FVector At = C->GetHer()->GetBoneLocation(Bone) + S.BoneOffset + Q.RotateVector(S.BoneOffsetLocal);
+		// (a bone of his, where her skeleton has none of that name: Bip000-R-Hand)
+		const USkeletalMeshComponent* Body = C->GetHer();
+		if (Body->GetBoneIndex(Bone) == INDEX_NONE && C->GetHim() && C->GetHim()->GetBoneIndex(Bone) != INDEX_NONE)
+			Body = C->GetHim();
+		const FQuat Q = Body->GetBoneQuaternion(Bone);
+		const FVector At = Body->GetBoneLocation(Bone) + S.BoneOffset + Q.RotateVector(S.BoneOffsetLocal);
 		if (bShotStart)
 		{
 			ShotAt = At;
@@ -284,6 +315,9 @@ void AMishiPlayerController::BeginStill(const FShot& S)
 		ConsoleCommand(FString::Printf(TEXT("r.ExposureOffset %.3f"), S.PathTraceEv));
 		ConsoleCommand(TEXT("ShowFlag.PathTracing 1"));
 		StillFrames = S.PathTrace + 20;
+		// (the skills' effects are not in the ray tracing scene: their lights go out with them)
+		if (AMishiCouple* C = Couple.Get())
+			C->SetFxHidden(true);
 	}
 	else
 		StillFrames = FMath::Max(1, FMath::RoundToInt(S.Hold * 30.f));
@@ -299,6 +333,8 @@ void AMishiPlayerController::EndStill()
 		ConsoleCommand(TEXT("r.ExposureOffset 0"));
 		ConsoleCommand(TEXT("r.PathTracing.SamplesPerPixel -1"));
 		ConsoleCommand(TEXT("r.PathTracing.ProgressDisplay 1"));
+		if (AMishiCouple* C = Couple.Get())
+			C->SetFxHidden(false);
 	}
 	bStillPathTraced = false;
 	HoldScene(false);
