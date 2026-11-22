@@ -176,6 +176,115 @@ def uv_scale(path):
     return out
 
 
+def _through(m, x, y, z):
+    """A point through an FBX matrix: 16 numbers, row after row, the translation in the last row."""
+    return (x * m[0] + y * m[4] + z * m[8] + m[12], x * m[1] + y * m[5] + z * m[9] + m[13], x * m[2] + y * m[6] + z * m[10] + m[14])
+
+
+def meshes(path):
+    """The skinned meshes of a file as they stand in their bind pose, in centimetres, and where the bones stood then:
+
+        {"meshes": [{"name": the mesh node's name,
+                     "vertices": [(x, y, z)], "polygons": [[vertex index]], "uvs": [[(u, v)] for each polygon's corners],
+                     "materials": [material name for each polygon], "weights": {bone name: ([vertex index], [weight])}}],
+         "bones": {bone name: (x, y, z)}}
+
+    (Blender 3.6's importer gives up on what Unity's exporter writes - a root that is skinned to and parents the meshes -
+    with a KeyError in link_hierarchy; this reads what a body-to-body fit needs and nothing else.)"""
+    root = read(path)
+    objects, links = root.find("Objects"), root.find("Connections")
+    scale = 1.0
+    settings = root.find("GlobalSettings")
+    if settings is not None and settings.find("Properties70") is not None:
+        for p in settings.find("Properties70").all("P"):
+            if p.props and p.props[0] == "UnitScaleFactor":
+                scale = float(p.props[-1])
+    geometry = {g.props[0]: g for g in objects.all("Geometry")}
+    materials = {m.props[0]: _name(m.props[1]) for m in objects.all("Material")}
+    models = {m.props[0]: m for m in objects.all("Model")}
+    deformers = {d.props[0]: d for d in objects.all("Deformer")}
+    of_model, mats_of, skin_of, clusters_of, bone_of = {}, {}, {}, {}, {}
+    for c in links.all("C"):
+        if c.props[0] != "OO":
+            continue
+        child, parent = c.props[1], c.props[2]
+        if child in geometry and parent in models:
+            of_model[child] = parent
+        elif child in materials and parent in models:
+            mats_of.setdefault(parent, []).append(materials[child])
+        elif child in deformers and parent in geometry:
+            skin_of[parent] = child
+        elif child in deformers and parent in deformers:
+            clusters_of.setdefault(parent, []).append(child)
+        elif child in models and parent in deformers:
+            bone_of[parent] = child
+    out = {"meshes": [], "bones": {}}
+    for gid, g in geometry.items():
+        v, pvi = g.find("Vertices"), g.find("PolygonVertexIndex")
+        if v is None or pvi is None:
+            continue
+        v, pvi = v.props[0], pvi.props[0]
+        layer = g.find("LayerElementUV")
+        uv = layer.find("UV").props[0] if layer is not None and layer.find("UV") is not None else None
+        uvi = layer.find("UVIndex").props[0] if uv is not None and layer.find("UVIndex") is not None else None
+        by_vertex = uv is not None and layer.find("MappingInformationType") is not None and layer.find("MappingInformationType").props[0] == "ByVertice"
+        names = mats_of.get(of_model.get(gid), [])
+        ml = g.find("LayerElementMaterial")
+        per_polygon = None
+        if ml is not None and ml.find("Materials") is not None and ml.find("MappingInformationType").props[0] == "ByPolygon":
+            per_polygon = ml.find("Materials").props[0]
+        weights, bind = {}, None
+        for cid in clusters_of.get(skin_of.get(gid), []):
+            cl = deformers[cid]
+            bone = _name(models[bone_of[cid]].props[1]) if cid in bone_of else _name(cl.props[1])
+            link, tr = cl.find("TransformLink"), cl.find("Transform")
+            if link is not None:
+                out["bones"].setdefault(bone, tuple(x * scale for x in link.props[0][12:15]))
+            if tr is not None and link is not None and bind is None:
+                # Transform takes the mesh's own space into the bone's (Unity's bind pose), TransformLink the bone's into the
+                # world: one after the other is where the mesh stood when it was bound - the same for every bone of it
+                a, b = tr.props[0], link.props[0]
+                bind = [sum(a[i * 4 + k] * b[k * 4 + j] for k in range(4)) for i in range(4) for j in range(4)]
+            idx, w = cl.find("Indexes"), cl.find("Weights")
+            if idx is not None and w is not None:
+                weights[bone] = (list(idx.props[0]), list(w.props[0]))
+        vertices = []
+        for i in range(0, len(v), 3):
+            p = (v[i], v[i + 1], v[i + 2])
+            if bind is not None:
+                p = _through(bind, *p)
+            vertices.append((p[0] * scale, p[1] * scale, p[2] * scale))
+        polygons, uvs, mats = [], [], []
+        poly, corners, corner = [], [], 0
+        for index in pvi:
+            last = index < 0
+            vertex = -index - 1 if last else index
+            poly.append(vertex)
+            if uv is not None:
+                k = vertex if by_vertex else corner
+                k = uvi[k] if uvi is not None else k
+                corners.append((uv[k * 2], uv[k * 2 + 1]))
+            corner += 1
+            if last:
+                m = per_polygon[len(polygons)] if per_polygon is not None and len(polygons) < len(per_polygon) else 0
+                mats.append(names[m] if m < len(names) else (names[0] if names else "?"))
+                polygons.append(poly)
+                uvs.append(corners)
+                poly, corners = [], []
+        model = models.get(of_model.get(gid))
+        out["meshes"].append({"name": _name(model.props[1]) if model is not None else _name(g.props[1]), "vertices": vertices,
+                              "polygons": polygons, "uvs": uvs, "materials": mats, "weights": weights})
+    # the bones no vertex hangs on (finger tips, the root): from the bind poses the file keeps
+    for pose in objects.all("Pose"):
+        for node in pose.all("PoseNode"):
+            n, m = node.find("Node"), node.find("Matrix")
+            if n is None or m is None or n.props[0] not in models:
+                continue
+            name = _name(models[n.props[0]].props[1])
+            out["bones"].setdefault(name, tuple(x * scale for x in m.props[0][12:15]))
+    return out
+
+
 if __name__ == "__main__":
     for p in sys.argv[1:]:
         print(p)

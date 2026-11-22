@@ -180,7 +180,8 @@ def default_textures():
     want = {"white": ("T_Mishi_White", (255, 255, 255, 255), "color"), "black": ("T_Mishi_Black", (0, 0, 0, 255), "color"),
             "mask": ("T_Mishi_MaskWhite", (255, 255, 255, 255), "mask"), "mask_black": ("T_Mishi_MaskBlack", (0, 0, 0, 255), "mask"),
             "flat": ("T_Mishi_FlatNormal", (128, 128, 255, 255), "normal"), "grey": ("T_Mishi_MaskGrey", (128, 128, 128, 128), "mask"),
-            "dry": ("T_Mishi_Dry", (128, 128, 0, 255), "mask")}
+            "dry": ("T_Mishi_Dry", (128, 128, 0, 255), "mask"),
+            "neutral": ("T_Mishi_Neutral", (128, 128, 128, 128), "linear"), "none": ("T_Mishi_None", (0, 0, 0, 0), "linear")}
     out = {}
     for key, (name, rgba, role) in want.items():
         if not exists(folder, name):
@@ -194,6 +195,9 @@ def default_textures():
                 setp(tex, "srgb", False)
             elif role == "mask":
                 setp(tex, "compression_settings", TC.TC_MASKS)
+                setp(tex, "srgb", False)
+            elif role == "linear":
+                setp(tex, "compression_settings", TC.TC_BC7)
                 setp(tex, "srgb", False)
             eal.save_loaded_asset(tex)
         out[key] = unreal.load_asset(asset_path(folder, name))
@@ -557,6 +561,47 @@ def step_materials(slice_data, room_materials, her, him):
     gtextures, n2 = import_textures(game_tex, "/Game/Mishi/Characters/Textures", character=True)
     report["steps"]["textures"] = {"room": len(textures), "characters": len(gtextures), "imported": n1 + n2}
     log("textures: %d room + %d character (%d imported)" % (len(textures), len(gtextures), n1 + n2))
+
+    # a skin pack's maps drawn into a material's own layout (Tools/skin_transfer/bake.py -> Import/_local/skin): brought in
+    # when the file is new or has changed; never in the repository
+    baked_dir = os.path.join(PROJECT, "Import", "_local", "skin")
+    baked_folder = "/Game/Mishi/Characters/Textures/Baked"
+    stamps = os.path.join(PROJECT, "Saved", "MishiDefaults")
+    n3 = 0
+    for name, d in defs.items():
+        if d["source"] == "unity":
+            continue
+        got = {}
+        for key, role in (("n", "normal"), ("c", "linear"), ("w", "linear"), ("wn", "normal")):
+            f = os.path.join(baked_dir, "%s_hm_%s.png" % (name, key))
+            if not os.path.isfile(f):
+                continue
+            asset = "T_%s_hm_%s" % (mishi_materials.safe_name(name), key)
+            stamp = os.path.join(stamps, asset + ".txt")
+            mark = "%d %d" % (os.path.getsize(f), int(os.path.getmtime(f)))
+            have = ""
+            if os.path.isfile(stamp):
+                with open(stamp) as fh:
+                    have = fh.read().strip()
+            if not exists(baked_folder, asset) or have != mark:
+                import_tasks([f], baked_folder, names=[asset])
+                tex = unreal.load_asset(asset_path(baked_folder, asset))
+                TC = unreal.TextureCompressionSettings
+                # (drawn in Unreal's own convention: a normal map's green is NOT flipped as the game's are)
+                setp(tex, "compression_settings", TC.TC_NORMALMAP if role == "normal" else TC.TC_BC7)
+                setp(tex, "srgb", False)
+                setp(tex, "flip_green_channel", False)
+                setp(tex, "max_texture_size", 0)
+                eal.save_loaded_asset(tex)
+                with open(stamp, "w") as fh:
+                    fh.write(mark)
+                n3 += 1
+            got[key] = unreal.load_asset(asset_path(baked_folder, asset))
+        if got:
+            d["baked"] = got
+            log("%s: a skin pack's maps (%s)%s" % (name, ", ".join(sorted(got)), ""))
+    if n3:
+        log("baked skin maps: %d imported" % n3)
 
     instances = {}
     kinds = {}

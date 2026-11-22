@@ -164,6 +164,47 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   不再是蜂窝格；柔光下三种几乎没有差别（法线层面的细节在柔光里本来就看不出）。
   包里另外还有按 HS2 身体画的整身出汗图（汗流 + 汗珠）、血管图、厚度图、8K 肤色——这些要先把两个身体的表面对应起来、
   把贴图烘到 ROE 的 UV 上才能用（没做）。
+- **整身搬运：把别的身体的皮肤包烘进 ROE 的 UV（v0.2，`Tools/skin_transfer/`，本地，可选）**。平铺块只借到"纹理的样子"，
+  皮肤包真正的内容——跟着身体走向的微法线、整身的汗流和水珠、血管、厚度、肤色里的细腻色斑——都钉在它自己身体的 UV 上。
+  做法是把那个身体"贴"到 ROE 的身体上，然后对 ROE 贴图的每个像素问一句"你在那个身体的哪一点"：
+
+  ```powershell
+  # 0. 源：HS2 的底模（ripper_tpose 的 scripts\honeyselect2）和皮肤包的贴图（Hanmen NEXT-GEN：两个下载的 zip）
+  python E:\code\othercode\ripper_tpose\scripts\honeyselect2\export_model.py --body female --head 0 --no-preview --out _work\hs2
+  python -I Tools\skin_transfer\pack_export.py "<Skin Textures v1.2.zip>" "<Shaders 415 Beta.zip>"          # -> _work\hs2\pack\*.png
+  $B = "D:\Program Files\blender-3.6.15-windows-x64\blender.exe"
+  & $B -b --factory-startup _work\hs2\bodies\body_female\body_female.blend --python Tools\skin_transfer\hs2_dump.py -- _work\hs2\body_female.npz
+  # 1. 配准：HS2 的身体和头贴到目标身体上（--skin：目标里算皮肤的材质）
+  & $B -b --factory-startup --python Tools\skin_transfer\fit.py -- _work\hs2\body_female.npz Import\a08_s01\female.fbx _work\hs2\fit_a08.npz --skin pc_a08_hd_skin,pc_a_nk_face
+  # 2. 对应：目标材质贴图的每个像素 -> 皮肤包身体上的 UV（身体 8K，脸 4K）
+  & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_female.npz _work\hs2\fit_a08.npz Import\a08_s01\female.fbx pc_a08_hd_skin 8192 _work\hs2\corr_a08_pc_a08_hd_skin_8192.npz
+  & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_female.npz _work\hs2\fit_a08.npz Import\a08_s01\female.fbx pc_a_nk_face 4096 _work\hs2\corr_a08_pc_a_nk_face_4096.npz
+  # 3. 烘焙 -> Import\_local\skin\<材质>_hm_{n,c,w,wn}.png；4. 导入（编辑器开着）
+  python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a08_hd_skin_8192.npz pc_a08_hd_skin
+  python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a_nk_face_4096.npz pc_a_nk_face
+  python Tools\ue_remote.py Tools\import_slice.py a08_s01 materials
+  ```
+
+  - **配准**（`fit.py`）：两个身体都是 T 姿、朝向相同。先用两套骨架里"同一个地方"的骨骼做地标（髋、膝、肩、肘、每个指节；
+    以及长在特征上的骨骼：乳头、嘴角、上下唇、鼻翼、眼球、眉头眉尾），求一个把每个地标送到对应位置、其余地方尽量平滑的
+    空间变形（径向基函数）；**脊柱的关节不用**——两套骨架切脊柱的高度不一样，用了肚子会整体错位 11 cm。然后让表面贴上去：
+    每个顶点找目标上朝向相同的最近点，位移在网格上平滑后再走，十轮，平滑逐轮减弱。目标只露出一部分皮肤（盔甲）时，
+    落在碎片边缘上的最近点不算（否则边缘外的皮肤会被挤到边上）。结果：两层皮肤相距中位数 0.2 mm。
+  - **对应**（`correspond.py`）：把目标的三角形画进它的 UV 方格（像素 -> 空间里的一点和朝向），再用 Blender 的 BVH 查贴好的
+    源网格上朝向相同的最近点，换成源的 UV。8K 有 3350 万个皮肤像素，约 3.5 分钟。
+  - **烘焙**（`bake.py`）：`_n` 微法线——源法线图减去它平滑的部分（身体的大起伏留给 ROE 自己的法线图），x、y 从源 UV 的方向
+    **转到**目标 UV 的方向（两套 UV 在皮肤上的走向不同；转角取"源 UV 沿目标 UV 怎么变"最近的旋转，一边是另一边的镜像时取镜像）；
+    `_c` RGB 肤色的细节（源肤色除以它自己的模糊：毛孔、细色斑；嘴唇、鼻孔这类"它的身体的特征"按中尺度对比度去掉，
+    幅度限制在 ±12 %），A 光泽的细节；`_w` R 汗流、G 水珠 / 湿斑、B 血管、A 厚度；`_wn` 汗流和水珠的法线。
+    两层皮肤相距超过 1.2 cm 的像素（耳朵里面、指甲）保持中性。
+  - **材质**（`SKIN_LOOK["baked"]`）：微法线按源的 2 倍强度叠在 ROE 法线上（按 1 倍在半米外和没有一样——比像素细的起伏会被
+    平均掉），平铺块留 0.7 作为"放大的颗粒"；肤色细节 ×1.5、光泽细节 ×1.0、血管 0.3、厚度让薄的地方多透一点光；出汗时
+    水珠从最湿的地方先出现，湿度过 0.55 后汗流才出来，原来均匀的小汗珠减半。
+  - **坑**：包里默认的身体肤色图带痣，第一次烘出来她胯上多了一颗——肤色细节改用包里的 NoMoles 那张；Blender 3.6 的 FBX 导入器读不了
+    Unity 导出的带蒙皮的 FBX（`link_hierarchy` 里 KeyError），所以 `mishi_fbx.meshes()` 自己读网格、UV、蒙皮和绑定姿势；
+    Unity 导出的 cluster `Transform` 是"网格到骨骼"，网格的绑定位置是 `Transform × TransformLink`；8K 的 BC7 贴图编辑器要压一两分钟，
+    期间 Python 里查到的尺寸是 32×32 的占位图。
+  - 贴图都是别人的作品：只在本机（`Import/_local/`、`_work/` 不进仓库）。
 - **出汗**。场景的湿度 `MPC_Mishi.Wet`（0-1）先是一层**汗膜**：粗糙度降到 `WetRoughness` 0.3、颜色暗 8 %、细纹被填平一半多；
   然后是**汗珠**：`Tools/textures/sweat.png`（`python Tools/make_sweat.py`：R G = 汗珠的法线，B = 汗珠在哪，A = 这颗汗珠在多大的湿度
   出现）—— 湿度越高冒出来的越多，小的先出、大的后出，直径 0.5-2.3 mm（`sweat_tile_cm` 8），3 m 外只剩汗膜的光泽；

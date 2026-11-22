@@ -24,7 +24,7 @@ import os
 
 import unreal
 
-VERSION = 17
+VERSION = 19
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -256,6 +256,14 @@ SKIN_LOOK = {
     "sweat_tile_cm": 8.0,           # what one tile of the beads covers: they are 0.5 - 2.3 mm across
     "sweat": {"face": 0.75, "body": 1.0, "tooth": 0.0},      # how much of the wetness a zone shows as beads
     "bead_roughness": 0.05,
+    # A skin pack's maps drawn into a material's own layout (Tools/skin_transfer -> Import/_local/skin/<material>_hm_*.png):
+    # used where they are there.  "relief": the pack's fine relief where it belongs on the body (at life size - the tiled
+    # relief stays under it at "tile" of its strength, for the grain that is larger than life); "colour" / "gloss": its fine
+    # colour and gloss; "veins"; "thin": more light through the thin places; "sweat": the pack's drops and rivulets (the
+    # tiled beads stay at "beads" of their number).
+    # (the relief at twice the pack's own strength: at 1 a skin half a metre from the lens is as smooth as without it - what
+    # is finer than the picture's pixels is averaged away, as the first tile at life size was)
+    "baked": {"relief": 2.0, "colour": 1.5, "gloss": 1.0, "veins": 0.3, "thin": 0.6, "sweat": 1.0, "tile": 0.7, "beads": 0.5},
 }
 
 
@@ -323,10 +331,32 @@ Rim = saturate(dot(n, n) * 1.5);
 return float3(n, sqrt(saturate(1.0 - dot(n, n))));
 """, [("S", sweat, "RGBA"), ("Wet", wet, ""), ("Field", fields, ""), ("Amount", beads, ""), ("Depth", depth, "")], F3,
                     [("Bead", F1), ("Rim", F1)], "sweat beads", x=-1500)
+    # a skin pack's maps in this material's own layout (SKIN_LOOK "baked"; neutral defaults: nothing of it without them)
+    b_normal = g.tex("BakedNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
+    b_colour = g.tex("BakedColour", d["neutral"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
+    b_wet = g.tex("BakedWet", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
+    b_wetn = g.tex("BakedWetNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
+    b_relief = g.scalar("BakedRelief", 0.0)
+    b_tint = g.scalar("BakedColourAmount", 0.0)
+    b_gloss = g.scalar("BakedGloss", 0.0)
+    b_veins = g.scalar("BakedVeins", 0.0)
+    b_thin = g.scalar("BakedThin", 0.0)
+    b_sweat = g.scalar("BakedSweat", 0.0)
+    water = g.custom("""
+// the pack's sweat: where it stands (drops, wet patches - the wettest spots first) and, on a skin wet enough, where it runs
+float wetness = saturate(Wet);
+float stand = saturate((W.g - (1.0 - wetness * 1.2)) * 4.0);
+float run = W.r * saturate((wetness - 0.55) * 2.5);       // (from 0.45 the last phase's 0.8 was a shower, not sweat)
+float on = saturate(max(stand, run)) * Amount * saturate((700.0 - Depth) / 300.0);
+Water = on;
+float2 n = N.xy * on;
+return float3(n, sqrt(saturate(1.0 - dot(n, n))));
+""", [("W", b_wet, "RGBA"), ("N", b_wetn, "RGB"), ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, "")], F3,
+                     [("Water", F1)], "sweat that stands and runs", x=-1500)
     rel = g.custom("""
 float near = saturate((400.0 - Depth) / 250.0);
 near *= 1.0 + Patches * Field.x;
-near *= 1.0 - Bead;                                       // under a bead the skin's own relief is not seen
+near *= 1.0 - max(Bead, Water);                           // under a bead the skin's own relief is not seen
 near *= 1.0 - 0.65 * saturate(Wet);                       // and a film of sweat fills the furrows: wet skin is smoother
 float2 l = (D.rg - 0.5) * 2.0 * Lines * near;
 float2 p = (D.ba - 0.5) * 2.0 * Pores * near;
@@ -334,10 +364,17 @@ float2 p = (D.ba - 0.5) * 2.0 * Pores * near;
 Cavity = saturate(length(l) * 1.3 + length(p) * 1.7);
 return normalize(float3(l + p, 1.0));
 """, [("D", relief, "RGBA"), ("Lines", lines, ""), ("Pores", pores, ""), ("Depth", depth, ""), ("Field", fields, ""), ("Patches", patches, ""),
-      ("Bead", bead, "Bead"), ("Wet", wet, "")], F3, [("Cavity", F1)], "relief", x=-1100)
+      ("Bead", bead, "Bead"), ("Wet", wet, ""), ("Water", water, "Water")], F3, [("Cavity", F1)], "relief", x=-1100)
     one = g.const(1.0, x=-1500)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", rel, ""), ("Weight", one, "")], F3, desc="normal + relief", x=-700)
+    baked = g.custom("""
+float k = Strength * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
+return normalize(float3(N.xy * k, max(N.z, 0.05)));
+""", [("N", b_normal, "RGB"), ("Strength", b_relief, ""), ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, "")], F3,
+                     desc="the pack's relief", x=-1100)
+    nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", baked, ""), ("Weight", one, "")], F3, desc="normal + the pack's relief", x=-600)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", bead, ""), ("Weight", one, "")], F3, desc="normal + beads", x=-500)
+    nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", water, ""), ("Weight", one, "")], F3, desc="normal + water", x=-400)
     cavity = g.scalar("ReliefCavity", 0.5)
     shade = g.scalar("ReliefShade", 0.0)
     mgac = g.tex("MaskMap", d["mask"], S.SAMPLERTYPE_MASKS, (uv, ""))
@@ -366,26 +403,37 @@ float pit = saturate(Pit * PitDepth) * (1.0 - 0.5 * film);
 col *= 1.0 - PitShade * saturate(Pit);
 rough = saturate(rough + 0.18 * pit);
 float level = Spec * lerp(1.0, Mgac.b, 0.5) * (1.0 + 0.35 * film) * (1.0 - 0.85 * pit);
+// the pack's fine colour (a factor round 1) and gloss (a pore shines less), its veins (a cooler, darker line under the skin)
+col *= lerp(float3(1.0, 1.0, 1.0), BC.rgb * 2.0, ColourAmount);
+float fine = (BC.a - 0.5) * 2.0 * GlossAmount * (1.0 - 0.5 * film);
+rough = saturate(rough * (1.0 - 0.8 * fine));
+level *= saturate(1.0 + 1.5 * fine);
+col = lerp(col, col * float3(0.78, 0.9, 0.98), saturate(BW.b * Veins));
 // then beads: water, smooth as glass, a little darker at the rim where it bends the light away
-rough = lerp(rough, BeadRough, Bead);
-level = lerp(level, 0.5, Bead);
-col *= 1.0 - 0.12 * Bead * BeadRim;
+float beads = max(Bead, Water);
+rough = lerp(rough, BeadRough, beads);
+level = lerp(level, 0.5, beads);
+col *= 1.0 - 0.12 * Bead * BeadRim - 0.05 * Water;
 Roughness = rough;
 AO = lerp(1.0, Mgac.b, Occ);
 Specular = level;
+// more of the light goes through where the body is thin (an ear, a finger)
+Through = saturate(Scatter + (1.0 - Scatter) * saturate(BW.a * 2.0) * Thin);
 return col;
 """
     c = g.custom(code, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mgac", mgac, "RGBA"), ("Smooth", smooth, ""), ("Occ", occ, ""),
                         ("Spec", spec, ""), ("Wet", wet, ""), ("Flush", flush, ""), ("WetRough", wet_rough, ""), ("FlushTint", flush_tint, ""),
                         ("Gloss", gloss, ""), ("Pit", rel, "Cavity"), ("PitDepth", cavity, ""), ("PitShade", shade, ""),
-                        ("Bead", bead, "Bead"), ("BeadRim", bead, "Rim"), ("BeadRough", bead_rough, "")],
-                 F3, [("Roughness", F1), ("AO", F1), ("Specular", F1)], "skin")
+                        ("Bead", bead, "Bead"), ("BeadRim", bead, "Rim"), ("BeadRough", bead_rough, ""),
+                        ("BC", b_colour, "RGBA"), ("BW", b_wet, "RGBA"), ("Water", water, "Water"), ("ColourAmount", b_tint, ""),
+                        ("GlossAmount", b_gloss, ""), ("Veins", b_veins, ""), ("Thin", b_thin, ""), ("Scatter", scatter, "")],
+                 F3, [("Roughness", F1), ("AO", F1), ("Specular", F1), ("Through", F1)], "skin")
     g.out(c, "", "BaseColor")
     g.out(c, "Roughness", "Roughness")
     g.out(c, "AO", "AmbientOcclusion")
     g.out(c, "Specular", "Specular")
     g.out(nrm, "", "Normal")
-    g.out(scatter, "", "Opacity")
+    g.out(c, "Through", "Opacity")
     return g.finish()
 
 
@@ -850,12 +898,32 @@ def make_instance(name, d, lookup, masters, folder):
             scalar("DetailStrength", f.get("_DetailBumpScale", 0.5))
         else:
             scalar("DetailStrength", 0.0)
+        baked = d.get("baked") or {}
+        look = SKIN_LOOK["baked"]
+        if baked.get("n") is not None:
+            mel.set_material_instance_texture_parameter_value(mi, "BakedNormal", baked["n"])
+            scalar("BakedRelief", look["relief"])
+            if relief:
+                # (the tiled relief under it: weaker - the body's own relief is there now, the tile only adds its grain)
+                scalar("ReliefLines", skin_look("lines", zone) * look["tile"])
+                scalar("ReliefPores", skin_look("pores", zone) * look["tile"])
+        if baked.get("c") is not None:
+            mel.set_material_instance_texture_parameter_value(mi, "BakedColour", baked["c"])
+            scalar("BakedColourAmount", look["colour"])
+            scalar("BakedGloss", look["gloss"])
+        if baked.get("w") is not None:
+            mel.set_material_instance_texture_parameter_value(mi, "BakedWet", baked["w"])
+            scalar("BakedVeins", look["veins"])
+            scalar("BakedThin", look["thin"])
+            if baked.get("wn") is not None:
+                mel.set_material_instance_texture_parameter_value(mi, "BakedWetNormal", baked["wn"])
+                scalar("BakedSweat", look["sweat"])
         if d.get("uv_cm"):
             scalar("UvCm", d["uv_cm"])
             if masters.get("_sweat") is not None:
                 mel.set_material_instance_texture_parameter_value(mi, "SweatMap", masters["_sweat"])
                 scalar("SweatTiling", d["uv_cm"] / SKIN_LOOK["sweat_tile_cm"])
-                scalar("SweatBeads", SKIN_LOOK["sweat"][skin_zone(name)])
+                scalar("SweatBeads", SKIN_LOOK["sweat"][skin_zone(name)] * (look["beads"] if baked.get("wn") is not None else 1.0))
                 scalar("BeadRoughness", SKIN_LOOK["bead_roughness"])
     elif kind == "eye":
         tex("IrisMap", "_IrisAlbedoTex")
