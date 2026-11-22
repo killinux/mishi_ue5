@@ -132,6 +132,16 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCouple* C = Couple(); return C && C->bSkinState; }, 64.f)
 		]
 	];
+	Bar->AddSlot().Padding(3.f)
+	[
+		// "pi fu: v0.2 / v0.1 / yuan ban" - which skin is shown (key N): a skin pack's maps drawn into the bodies' own layout,
+		// the tiled relief and beads alone, the game's own materials
+		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+				const int32 V = C ? C->SkinVersion : 2;
+				return V >= 2 ? MISHI_TEXT("\u76AE\u80A4\uFF1Av0.2") : V == 1 ? MISHI_TEXT("\u76AE\u80A4\uFF1Av0.1") : MISHI_TEXT("\u76AE\u80A4\uFF1A\u539F\u7248"); }),
+			[this]() { if (AMishiCouple* C = Couple()) C->SkinVersion = (C->SkinVersion + 2) % 3; },
+			[this]() { const AMishiCouple* C = Couple(); return C && C->SkinVersion >= 2; }, 112.f)
+	];
 	// what only a showcase has: the game's own camera for the skills
 	const TAttribute<EVisibility> ShowcaseOnly = TAttribute<EVisibility>::CreateLambda([this]()
 	{

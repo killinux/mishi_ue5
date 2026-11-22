@@ -217,6 +217,7 @@ void AMishiPlayerController::StartShots(const FString& File)
 		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
 		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
 		if (O->TryGetNumberField(TEXT("aura"), N)) S.Aura = int32(N);
+		if (O->TryGetNumberField(TEXT("skin"), N)) S.Skin = int32(N);
 		if (O->TryGetNumberField(TEXT("wet"), N)) S.Wet = float(N);
 		if (O->TryGetNumberField(TEXT("flush"), N)) S.Flush = float(N);
 		O->TryGetStringField(TEXT("upscale"), S.Upscale);
@@ -385,6 +386,8 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->bFx = S.Fx > 0;
 		if (S.Aura >= 0)
 			C->AuraMode = FMath::Clamp(S.Aura, 0, 2);
+		if (S.Skin >= 0)
+			C->SkinVersion = FMath::Clamp(S.Skin, 0, 2);
 		if (S.Wet > -1.5f)
 			C->WetHeld = S.Wet;
 		if (S.Flush > -1.5f)
@@ -684,6 +687,7 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 		if (WasInputKeyJustPressed(EKeys::M)) C->SetHisStyle((C->HisStyle + 1) % 3);
 		if (WasInputKeyJustPressed(EKeys::X)) C->SetSfx(!C->bSfx);
 		if (WasInputKeyJustPressed(EKeys::B)) C->bSkinState = !C->bSkinState;
+		if (WasInputKeyJustPressed(EKeys::N)) C->SkinVersion = (C->SkinVersion + 2) % 3;        // 2 -> 1 -> 0 -> 2
 	}
 	if (WasInputKeyJustPressed(EKeys::H)) ToggleHud();
 }

@@ -145,6 +145,8 @@ void AMishiCouple::StepSkin(float DeltaSeconds)
 	{
 		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("Wet"), Wet);
 		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("Flush"), Flush);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("SkinBaked"), SkinVersion >= 2 ? 1.f : 0.f);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("SkinRelief"), SkinVersion >= 1 ? 1.f : 0.f);
 	}
 }
 

@@ -97,6 +97,11 @@ public:
 	float WetHeld = -1.f;
 	float FlushHeld = -1.f;
 
+	/** Which skin is shown (key N, the panel's button, a shot's "skin"): 2 a skin pack's maps drawn into the bodies' own
+	 *  layout, where a material has them (v0.2); 1 the tiled relief and the beads alone (v0.1); 0 as the game's own
+	 *  materials say.  The skin materials read it from MPC_Mishi (SkinBaked, SkinRelief). */
+	int32 SkinVersion = 2;
+
 	/** A fill that goes with the camera and lights the bodies alone (lux; 0: none) - a showcase under one sun: her poses face
 	 *  every way, and what faces away from the sun would be left to the sky.  Tools/mishi_look.py sets it (LOOK "camera_fill"). */
 	UPROPERTY(EditAnywhere, Category = "Mishi")

@@ -24,7 +24,7 @@ import os
 
 import unreal
 
-VERSION = 19
+VERSION = 20
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -188,20 +188,30 @@ TILED_UV = "return UV * Tiling.xy + Tiling.zw;"
 
 
 # ---------------------------------------------------------------------------------------------------------------- shared assets
+MPC_SCALARS = (("Wet", 0.0), ("Flush", 0.0), ("SkinBaked", 1.0), ("SkinRelief", 1.0))
+
+
 def ensure_mpc():
-    """MPC_Mishi: what the couple drives through the scene - Wet (sweat), Flush (blush)."""
+    """MPC_Mishi: what the couple drives through the scene - Wet (sweat), Flush (blush) - and which skin is shown (the
+    game's "skin" switch, AMishiCouple::SkinVersion): SkinBaked 1 = with a skin pack's baked maps where a material has them,
+    SkinRelief 1 = with the tiled relief and the beads (0: the game's own detail map, no beads) - 1 / 1 is the newest."""
     path = MATS + "/MPC_Mishi"
     if eal.does_asset_exist(path):
-        return unreal.load_asset(path)
-    mpc = asset_tools.create_asset("MPC_Mishi", MATS, unreal.MaterialParameterCollection, unreal.MaterialParameterCollectionFactoryNew())
-    params = []
-    for name, value in (("Wet", 0.0), ("Flush", 0.0)):
-        p = unreal.CollectionScalarParameter()
-        p.set_editor_property("parameter_name", name)
-        p.set_editor_property("default_value", value)
-        params.append(p)
-    setp(mpc, "scalar_parameters", params)
-    eal.save_loaded_asset(mpc)
+        mpc = unreal.load_asset(path)
+    else:
+        mpc = asset_tools.create_asset("MPC_Mishi", MATS, unreal.MaterialParameterCollection, unreal.MaterialParameterCollectionFactoryNew())
+    params = list(mpc.get_editor_property("scalar_parameters"))
+    have = {str(p.get_editor_property("parameter_name")) for p in params}
+    missing = [(n, v) for n, v in MPC_SCALARS if n not in have]
+    if missing:
+        for name, value in missing:
+            p = unreal.CollectionScalarParameter()
+            p.set_editor_property("parameter_name", name)
+            p.set_editor_property("default_value", value)
+            params.append(p)
+        setp(mpc, "scalar_parameters", params)
+        eal.save_loaded_asset(mpc)
+        unreal.log("[MISHI] MPC_Mishi: added %s" % ", ".join(n for n, _ in missing))
     return mpc
 
 
@@ -295,8 +305,13 @@ def build_skin(d, mpc, profile):
     detail = g.tex("DetailNormalMap", d["flat"], S.SAMPLERTYPE_NORMAL, (duv, ""))
     dstrength = g.scalar("DetailStrength", 0.5)
     depth = g.node(unreal.MaterialExpressionPixelDepth, -1900)
+    # which skin is shown (MPC_Mishi, the game's "skin" switch): the pack's baked maps, the tiled relief and beads
+    sw_baked = g.collection(mpc, "SkinBaked")
+    sw_relief = g.collection(mpc, "SkinRelief")
+    relief_on = g.scalar("ReliefOn", 0.0)             # 1: this instance has the tiled relief in the game's detail map's place
     # the pores are for close-ups: gone by 2.5 m, where they would only shimmer
-    fade = g.custom("return Strength * saturate((400.0 - Depth) / 250.0);", [("Strength", dstrength, ""), ("Depth", depth, "")], F1,
+    fade = g.custom("return Strength * (1.0 - ReliefOn * Relief) * saturate((400.0 - Depth) / 250.0);",
+                    [("Strength", dstrength, ""), ("Depth", depth, ""), ("ReliefOn", relief_on, ""), ("Relief", sw_relief, "")], F1,
                     desc="detail fade", x=-1500)
     nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
     # the relief made here (SKIN_LOOK): furrows in R, G and pores in B, A, tiled so that it is as fine on a face as on a thigh
@@ -321,15 +336,18 @@ return float2(a, b);
     suv = g.custom("return UV * Tiling;", [("UV", uv, ""), ("Tiling", stiling, "")], F2, desc="sweat uv", x=-1900)
     sweat = g.tex("SweatMap", d["dry"], S.SAMPLERTYPE_MASKS, (suv, ""))
     beads = g.scalar("SweatBeads", 0.0)
+    baked_beads = g.scalar("BakedBeads", 1.0)         # of the tiled beads that stay beside a pack's own drops
+    baked_tile = g.scalar("BakedTile", 1.0)           # of the tiled relief that stays under a pack's own
     bead = g.custom("""
 float near = saturate((320.0 - Depth) / 170.0);          // beads are for close-ups: by 3 m only the film's shine is left
-float local = saturate(Wet) * (0.9 + 0.55 * Field.y) * Amount;
+float local = saturate(Wet) * (0.9 + 0.55 * Field.y) * Amount * Relief * lerp(1.0, Beside, Baked);
 float on = S.b * saturate((local * 1.2 - S.a) * 6.0) * near;
 float2 n = (S.rg - 0.5) * 2.0 * on;
 Bead = on;
 Rim = saturate(dot(n, n) * 1.5);
 return float3(n, sqrt(saturate(1.0 - dot(n, n))));
-""", [("S", sweat, "RGBA"), ("Wet", wet, ""), ("Field", fields, ""), ("Amount", beads, ""), ("Depth", depth, "")], F3,
+""", [("S", sweat, "RGBA"), ("Wet", wet, ""), ("Field", fields, ""), ("Amount", beads, ""), ("Depth", depth, ""),
+      ("Relief", sw_relief, ""), ("Baked", sw_baked, ""), ("Beside", baked_beads, "")], F3,
                     [("Bead", F1), ("Rim", F1)], "sweat beads", x=-1500)
     # a skin pack's maps in this material's own layout (SKIN_LOOK "baked"; neutral defaults: nothing of it without them)
     b_normal = g.tex("BakedNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
@@ -347,30 +365,32 @@ return float3(n, sqrt(saturate(1.0 - dot(n, n))));
 float wetness = saturate(Wet);
 float stand = saturate((W.g - (1.0 - wetness * 1.2)) * 4.0);
 float run = W.r * saturate((wetness - 0.55) * 2.5);       // (from 0.45 the last phase's 0.8 was a shower, not sweat)
-float on = saturate(max(stand, run)) * Amount * saturate((700.0 - Depth) / 300.0);
+float on = saturate(max(stand, run)) * Amount * Baked * saturate((700.0 - Depth) / 300.0);
 Water = on;
 float2 n = N.xy * on;
 return float3(n, sqrt(saturate(1.0 - dot(n, n))));
-""", [("W", b_wet, "RGBA"), ("N", b_wetn, "RGB"), ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, "")], F3,
+""", [("W", b_wet, "RGBA"), ("N", b_wetn, "RGB"), ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, ""), ("Baked", sw_baked, "")], F3,
                      [("Water", F1)], "sweat that stands and runs", x=-1500)
     rel = g.custom("""
 float near = saturate((400.0 - Depth) / 250.0);
 near *= 1.0 + Patches * Field.x;
 near *= 1.0 - max(Bead, Water);                           // under a bead the skin's own relief is not seen
 near *= 1.0 - 0.65 * saturate(Wet);                       // and a film of sweat fills the furrows: wet skin is smoother
+near *= Relief * lerp(1.0, Under, Baked);                 // (the "skin" switch; under a pack's own relief the tile is weaker)
 float2 l = (D.rg - 0.5) * 2.0 * Lines * near;
 float2 p = (D.ba - 0.5) * 2.0 * Pores * near;
 // where the surface tilts it is a furrow's or a pit's wall: less of the sky gets in there
 Cavity = saturate(length(l) * 1.3 + length(p) * 1.7);
 return normalize(float3(l + p, 1.0));
 """, [("D", relief, "RGBA"), ("Lines", lines, ""), ("Pores", pores, ""), ("Depth", depth, ""), ("Field", fields, ""), ("Patches", patches, ""),
-      ("Bead", bead, "Bead"), ("Wet", wet, ""), ("Water", water, "Water")], F3, [("Cavity", F1)], "relief", x=-1100)
+      ("Bead", bead, "Bead"), ("Wet", wet, ""), ("Water", water, "Water"), ("Relief", sw_relief, ""), ("Baked", sw_baked, ""),
+      ("Under", baked_tile, "")], F3, [("Cavity", F1)], "relief", x=-1100)
     one = g.const(1.0, x=-1500)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", rel, ""), ("Weight", one, "")], F3, desc="normal + relief", x=-700)
     baked = g.custom("""
-float k = Strength * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
+float k = Strength * Baked * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
 return normalize(float3(N.xy * k, max(N.z, 0.05)));
-""", [("N", b_normal, "RGB"), ("Strength", b_relief, ""), ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, "")], F3,
+""", [("N", b_normal, "RGB"), ("Strength", b_relief, ""), ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, ""), ("Baked", sw_baked, "")], F3,
                      desc="the pack's relief", x=-1100)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", baked, ""), ("Weight", one, "")], F3, desc="normal + the pack's relief", x=-600)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", bead, ""), ("Weight", one, "")], F3, desc="normal + beads", x=-500)
@@ -404,11 +424,11 @@ col *= 1.0 - PitShade * saturate(Pit);
 rough = saturate(rough + 0.18 * pit);
 float level = Spec * lerp(1.0, Mgac.b, 0.5) * (1.0 + 0.35 * film) * (1.0 - 0.85 * pit);
 // the pack's fine colour (a factor round 1) and gloss (a pore shines less), its veins (a cooler, darker line under the skin)
-col *= lerp(float3(1.0, 1.0, 1.0), BC.rgb * 2.0, ColourAmount);
-float fine = (BC.a - 0.5) * 2.0 * GlossAmount * (1.0 - 0.5 * film);
+col *= lerp(float3(1.0, 1.0, 1.0), BC.rgb * 2.0, ColourAmount * Baked);
+float fine = (BC.a - 0.5) * 2.0 * GlossAmount * Baked * (1.0 - 0.5 * film);
 rough = saturate(rough * (1.0 - 0.8 * fine));
 level *= saturate(1.0 + 1.5 * fine);
-col = lerp(col, col * float3(0.78, 0.9, 0.98), saturate(BW.b * Veins));
+col = lerp(col, col * float3(0.78, 0.9, 0.98), saturate(BW.b * Veins * Baked));
 // then beads: water, smooth as glass, a little darker at the rim where it bends the light away
 float beads = max(Bead, Water);
 rough = lerp(rough, BeadRough, beads);
@@ -418,7 +438,7 @@ Roughness = rough;
 AO = lerp(1.0, Mgac.b, Occ);
 Specular = level;
 // more of the light goes through where the body is thin (an ear, a finger)
-Through = saturate(Scatter + (1.0 - Scatter) * saturate(BW.a * 2.0) * Thin);
+Through = saturate(Scatter + (1.0 - Scatter) * saturate(BW.a * 2.0) * Thin * Baked);
 return col;
 """
     c = g.custom(code, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mgac", mgac, "RGBA"), ("Smooth", smooth, ""), ("Occ", occ, ""),
@@ -426,7 +446,8 @@ return col;
                         ("Gloss", gloss, ""), ("Pit", rel, "Cavity"), ("PitDepth", cavity, ""), ("PitShade", shade, ""),
                         ("Bead", bead, "Bead"), ("BeadRim", bead, "Rim"), ("BeadRough", bead_rough, ""),
                         ("BC", b_colour, "RGBA"), ("BW", b_wet, "RGBA"), ("Water", water, "Water"), ("ColourAmount", b_tint, ""),
-                        ("GlossAmount", b_gloss, ""), ("Veins", b_veins, ""), ("Thin", b_thin, ""), ("Scatter", scatter, "")],
+                        ("GlossAmount", b_gloss, ""), ("Veins", b_veins, ""), ("Thin", b_thin, ""), ("Scatter", scatter, ""),
+                        ("Baked", sw_baked, "")],
                  F3, [("Roughness", F1), ("AO", F1), ("Specular", F1), ("Through", F1)], "skin")
     g.out(c, "", "BaseColor")
     g.out(c, "Roughness", "Roughness")
@@ -882,6 +903,13 @@ def make_instance(name, d, lookup, masters, folder):
         scalar("Smoothness", f.get("_Smoothness", 0.85))
         scalar("OcclusionStrength", f.get("_OcclusionStrength", 0.7))
         relief = SKIN_LOOK["detail"] == "relief" and masters.get("_skin_detail") is not None and d.get("uv_cm")
+        # the game's own detail map and its numbers, whichever skin is shown: the "skin" switch can go back to it
+        if tex("DetailNormalMap", "_DetailNormalMap"):
+            scalar("DetailTiling", tiling.get("_DetailNormalMap", [100.0])[0])
+            scalar("DetailStrength", f.get("_DetailBumpScale", 0.5))
+        else:
+            scalar("DetailStrength", 0.0)
+        scalar("ReliefOn", 1.0 if relief else 0.0)
         if relief:
             # (the relief instead of the game's map, not on top of it)
             zone = skin_zone(name)
@@ -892,21 +920,13 @@ def make_instance(name, d, lookup, masters, folder):
             scalar("ReliefPores", skin_look("pores", zone))
             scalar("ReliefCavity", skin_look("cavity", zone))
             scalar("ReliefShade", skin_look("shade", zone))
-            scalar("DetailStrength", 0.0)
-        elif tex("DetailNormalMap", "_DetailNormalMap"):
-            scalar("DetailTiling", tiling.get("_DetailNormalMap", [100.0])[0])
-            scalar("DetailStrength", f.get("_DetailBumpScale", 0.5))
-        else:
-            scalar("DetailStrength", 0.0)
         baked = d.get("baked") or {}
         look = SKIN_LOOK["baked"]
         if baked.get("n") is not None:
             mel.set_material_instance_texture_parameter_value(mi, "BakedNormal", baked["n"])
             scalar("BakedRelief", look["relief"])
-            if relief:
-                # (the tiled relief under it: weaker - the body's own relief is there now, the tile only adds its grain)
-                scalar("ReliefLines", skin_look("lines", zone) * look["tile"])
-                scalar("ReliefPores", skin_look("pores", zone) * look["tile"])
+            # (the tiled relief under it: weaker - the body's own relief is there now, the tile only adds its grain)
+            scalar("BakedTile", look["tile"])
         if baked.get("c") is not None:
             mel.set_material_instance_texture_parameter_value(mi, "BakedColour", baked["c"])
             scalar("BakedColourAmount", look["colour"])
@@ -923,7 +943,8 @@ def make_instance(name, d, lookup, masters, folder):
             if masters.get("_sweat") is not None:
                 mel.set_material_instance_texture_parameter_value(mi, "SweatMap", masters["_sweat"])
                 scalar("SweatTiling", d["uv_cm"] / SKIN_LOOK["sweat_tile_cm"])
-                scalar("SweatBeads", SKIN_LOOK["sweat"][skin_zone(name)] * (look["beads"] if baked.get("wn") is not None else 1.0))
+                scalar("SweatBeads", SKIN_LOOK["sweat"][skin_zone(name)])
+                scalar("BakedBeads", look["beads"] if baked.get("wn") is not None else 1.0)
                 scalar("BeadRoughness", SKIN_LOOK["bead_roughness"])
     elif kind == "eye":
         tex("IrisMap", "_IrisAlbedoTex")

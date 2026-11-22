@@ -94,6 +94,7 @@ private:
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
 		int32 Aura = -1;              // "aura": the buff's aura from this shot on - 0 off, 1 in battle, 2 on every part (-1: as it is)
+		int32 Skin = -1;              // "skin": which skin from this shot on - 2 with the pack's maps, 1 the tiled relief, 0 the game's (-1: as it is)
 		float Wet = -2.f;             // "wet" / "flush": sweat and blush held at this level (0 - 1) from this shot on, whatever the
 		float Flush = -2.f;           // phase; -1 gives them back to the phase (-2: as it is)
 		FString Upscale;              // "upscale": the picture's upscaler from this shot on (tsr, dlaa, quality, balanced, performance)
