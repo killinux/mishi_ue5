@@ -259,6 +259,16 @@ SKIN_LOOK = {
 }
 
 
+# What Import/_local/skin_detail.json says about a relief that was put there (import_slice.py reads it): keys of SKIN_LOOK
+# that go before it - tile_cm, lines, pores, each a number or a table by zone.
+SKIN_LOCAL = {}
+
+
+def skin_look(key, zone):
+    v = SKIN_LOCAL.get(key, SKIN_LOOK[key]) if key in ("tile_cm", "lines", "pores", "cavity", "shade", "patches") else SKIN_LOOK[key]
+    return v[zone] if isinstance(v, dict) else v
+
+
 def skin_zone(name):
     low = name.lower()
     return "tooth" if "tooth" in low or "teeth" in low else "face" if "face" in low or "head" in low else "body"
@@ -828,12 +838,12 @@ def make_instance(name, d, lookup, masters, folder):
             # (the relief instead of the game's map, not on top of it)
             zone = skin_zone(name)
             mel.set_material_instance_texture_parameter_value(mi, "SkinDetailMap", masters["_skin_detail"])
-            scalar("ReliefPatches", SKIN_LOOK["patches"])
-            scalar("ReliefTiling", d["uv_cm"] / SKIN_LOOK["tile_cm"])
-            scalar("ReliefLines", SKIN_LOOK["lines"][zone])
-            scalar("ReliefPores", SKIN_LOOK["pores"][zone])
-            scalar("ReliefCavity", SKIN_LOOK["cavity"])
-            scalar("ReliefShade", SKIN_LOOK["shade"])
+            scalar("ReliefPatches", skin_look("patches", zone))
+            scalar("ReliefTiling", d["uv_cm"] / skin_look("tile_cm", zone))
+            scalar("ReliefLines", skin_look("lines", zone))
+            scalar("ReliefPores", skin_look("pores", zone))
+            scalar("ReliefCavity", skin_look("cavity", zone))
+            scalar("ReliefShade", skin_look("shade", zone))
             scalar("DetailStrength", 0.0)
         elif tex("DetailNormalMap", "_DetailNormalMap"):
             scalar("DetailTiling", tiling.get("_DetailNormalMap", [100.0])[0])

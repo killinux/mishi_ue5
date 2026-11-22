@@ -197,14 +197,29 @@ def default_textures():
                 setp(tex, "srgb", False)
             eal.save_loaded_asset(tex)
         out[key] = unreal.load_asset(asset_path(folder, name))
-    # what Tools/make_*.py drew (Tools/textures, in the repository): brought in again when the file has changed
+    # what Tools/make_*.py drew (Tools/textures, in the repository): brought in again when the file has changed.  A file of
+    # the same name in Import/_local goes before it - a relief cut from a skin pack somebody made (Tools/make_skin_tile.py),
+    # which is not ours to put in a repository; the .json beside it says how it is to be laid (mishi_materials.SKIN_LOCAL)
+    local = os.path.join(PROJECT, "Import", "_local")
+    mishi_materials.SKIN_LOCAL = {}
     for key, name, file in (("skin_detail", "T_Mishi_SkinDetail", "skin_detail.png"), ("sweat", "T_Mishi_Sweat", "sweat.png")):
-        path = os.path.join(PROJECT, "Tools", "textures", file)
+        path = os.path.join(local, file)
+        if os.path.isfile(path):
+            note = os.path.splitext(path)[0] + ".json"
+            if key == "skin_detail" and os.path.isfile(note):
+                with open(note, encoding="utf-8") as f:
+                    mishi_materials.SKIN_LOCAL = json.load(f)
+            log("%s: the local %s" % (name, path))
+        else:
+            path = os.path.join(PROJECT, "Tools", "textures", file)
         if not os.path.isfile(path):
             continue
         stamp = os.path.join(tmp, name + ".txt")
-        mark = "%d %d" % (os.path.getsize(path), int(os.path.getmtime(path)))
-        have = open(stamp).read().strip() if os.path.isfile(stamp) else ""
+        mark = "%s %d %d" % (path, os.path.getsize(path), int(os.path.getmtime(path)))
+        have = ""
+        if os.path.isfile(stamp):
+            with open(stamp) as f:
+                have = f.read().strip()
         if not exists(folder, name) or have != mark:
             import_tasks([path], folder, names=[name])
             tex = unreal.load_asset(asset_path(folder, name))

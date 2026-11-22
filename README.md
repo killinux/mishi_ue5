@@ -144,6 +144,26 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   （`lines` / `pores`）；沟和孔的壁让高光变暗变糙（`cavity`）、颜色略深（`shade`）；强弱在身上不均匀（`patches`）。
   **尺寸是放大过的**：真实的皮肤小块只有半毫米，镜头在半米外时一个像素就是 0.2 mm，按真实尺寸画只会让整片高光变暗、什么也看不出，
   所以一格是 1.25 mm（`tile_cm` 6）。柔光下本来就含蓄，阳光、高光和出汗时明显。
+- **换成真实皮肤的微法线（本地，可选）**。别的游戏的皮肤包（比如给 HoneySelect 2 做的 Hanmen NEXT-GEN：8K 的身体微法线、4K 的脸）
+  是按那个游戏的身体 / 脸的 UV 画的，**不能直接贴到 ROE 的身体上**（`out\skin_hair_samples\06_*.jpg`：两套 UV 排法完全不同），
+  但它的微细节本身可以借来：`Tools/make_skin_tile.py` 从法线贴图上均匀的一块（背、脸颊）裁一个方块，只留细的部分
+  （身体的起伏在低频里），首尾交叉淡化成无缝平铺块，写到 `Import/_local/skin_detail.png`（R G = 身体，B A = 脸）和
+  `skin_detail.json`（每个区域一格是多少厘米、用哪一层）。`Import/_local/` 里有这一对时导入脚本用它代替程序画的那张
+  （日志 `T_Mishi_SkinDetail: the local ...`），删掉再跑一次 materials 就换回来。**这类贴图是别人的作品（多半是付费的）：只在本机用，
+  `Import/` 不进仓库。** 源图用 UnityPy 从 zipmod 的 .unity3d 里导成 PNG（`Texture2D.image.save`）；Unity 的 DXT5nm 法线 x 在 A、y 在 G
+  （`--body-layout ag`），普通的在 R G。
+
+  ```powershell
+  python Tools\make_skin_tile.py --body cf_nextgen_body_base_n.png --body-box 2304,1280,1536 --body-layout ag --body-mm 0.2 `
+      --face cf_nextgen_head_00_00_n.png --face-box 2440,1900,768 --face-layout rg --face-mm 0.087 --face-repeat 2 --scale 2
+  python Tools\ue_remote.py Tools\import_slice.py eros15_07 materials
+  ```
+
+  `--*-mm` 是源图一个像素在它自己的身体上是多少毫米（8K 身体图约 0.2，4K 脸图约 0.087），`--scale 2` 是比真实尺寸放大一倍——
+  真实尺寸的纹理比画面分辨率还细，和程序版一样要放大才看得见。对比见 `05_*.jpg`：阳光下的高光里是不规则的真实纹理，
+  不再是蜂窝格；柔光下三种几乎没有差别（法线层面的细节在柔光里本来就看不出）。
+  包里另外还有按 HS2 身体画的整身出汗图（汗流 + 汗珠）、血管图、厚度图、8K 肤色——这些要先把两个身体的表面对应起来、
+  把贴图烘到 ROE 的 UV 上才能用（没做）。
 - **出汗**。场景的湿度 `MPC_Mishi.Wet`（0-1）先是一层**汗膜**：粗糙度降到 `WetRoughness` 0.3、颜色暗 8 %、细纹被填平一半多；
   然后是**汗珠**：`Tools/textures/sweat.png`（`python Tools/make_sweat.py`：R G = 汗珠的法线，B = 汗珠在哪，A = 这颗汗珠在多大的湿度
   出现）—— 湿度越高冒出来的越多，小的先出、大的后出，直径 0.5-2.3 mm（`sweat_tile_cm` 8），3 m 外只剩汗膜的光泽；
