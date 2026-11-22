@@ -145,7 +145,11 @@ void AMishiPlayerController::BeginPlay()
 		Viewport->AddViewportWidgetContent(Hud.ToSharedRef(), 10);
 	}
 	FString ShotsFile;
-	// the picture's upscaler from the command line (captures: Tools/ue.ps1 -Upscale dlaa -RR)
+	// The picture's upscaler.  Where NVIDIA's DLSS is there (its plugin installed, a card that can) the game starts with it
+	// (user 11-22: "打开默认就是dlss") - as DLAA, its anti-aliasing on the full picture: the calmest picture of those measured
+	// here and a little faster than the engine's TSR; the panel's button goes on to the upscaling modes.  The command line
+	// can name another (Tools/ue.ps1 -Upscale tsr | dlaa | quality | balanced | performance, -RR).
+	int32 Wanted = HasDLSS() ? 1 : 0;
 	FString UpscaleName;
 	if (FParse::Value(FCommandLine::Get(), TEXT("MishiUpscale="), UpscaleName))
 	{
@@ -160,9 +164,10 @@ void AMishiPlayerController::BeginPlay()
 		}
 		else
 		{
-			SetUpscale(Picked);
+			Wanted = Picked;
 		}
 	}
+	SetUpscale(Wanted);
 	if (FParse::Param(FCommandLine::Get(), TEXT("MishiRR")))
 	{
 		SetRayReconstruction(true);
@@ -492,10 +497,23 @@ void AMishiPlayerController::BeginStill(const FShot& S)
 		// (the skills' effects are not in the ray tracing scene: their lights go out with them)
 		if (AMishiCouple* C = Couple.Get())
 			C->SetFxHidden(true);
-		// (and no DLSS over a picture that adds up samples: the path tracer has its own denoiser)
-		StillUpscale = Upscale + (bRayReconstruction ? 100 : 0);
-		if (Upscale > 0)
-			SetUpscale(0);
+		// The path tracer does its own anti-aliasing: while it is shown the engine runs no temporal upscaler at all, DLSS
+		// neither (FSceneRenderer: "path tracer does its own anti-aliasing").  So DLSS is left switched on - switched off for
+		// the still and on again after it, the card page-faulted at the next still: its network set up, 14 frames on torn
+		// down again.  Two things only: a path-traced still is rendered whole, whatever share of the picture DLSS was
+		// rendering; and the plugin throws a network away that has been idle for 3 frames, which would be the same setting
+		// up and tearing down between every two stills - for the still it keeps it.
+		if (IConsoleVariable* Percent = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
+		{
+			StillPercent = Percent->GetFloat();
+			if (StillPercent != 100.f)
+				Percent->Set(100.f, ECVF_SetByCode);
+		}
+		if (IConsoleVariable* Keep = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.FramesUntilFeatureDestruction")))
+		{
+			StillKeep = Keep->GetInt();
+			Keep->Set(1000000, ECVF_SetByCode);
+		}
 	}
 	else
 		StillFrames = FMath::Max(1, FMath::RoundToInt(S.Hold * 30.f));
@@ -514,11 +532,14 @@ void AMishiPlayerController::EndStill()
 		ConsoleCommand(TEXT("r.PathTracing.ProgressDisplay 1"));
 		if (AMishiCouple* C = Couple.Get())
 			C->SetFxHidden(false);
-		if (StillUpscale % 100 > 0)
-		{
-			SetUpscale(StillUpscale % 100);
-			SetRayReconstruction(StillUpscale >= 100);
-		}
+		if (StillPercent > 0.f && StillPercent != 100.f)
+			if (IConsoleVariable* Percent = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
+				Percent->Set(StillPercent, ECVF_SetByCode);
+		if (StillKeep >= 0)
+			if (IConsoleVariable* Keep = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.FramesUntilFeatureDestruction")))
+				Keep->Set(StillKeep, ECVF_SetByCode);
+		StillPercent = 0.f;
+		StillKeep = -1;
 	}
 	bStillPathTraced = false;
 	HoldScene(false);

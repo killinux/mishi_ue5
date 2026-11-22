@@ -351,7 +351,9 @@ python Tools\ue_remote.py Tools\import_slice.py a08_s01 level --style game    # 
 
 ## 画质选项：TSR / DLSS（可选插件）
 
-默认是引擎自己的 TSR、100% 分辨率。装了 NVIDIA 的 DLSS 插件、显卡也支持时，面板上多出两个按钮：
+装了 NVIDIA 的 DLSS 插件、显卡也支持时，**启动就是 DLSS**（用户 11-22："打开默认就是dlss"）—— DLAA 档：原生分辨率，只用它做抗锯齿，
+量下来画面最稳，还比 TSR 快一点（见下面两张表）。没装插件就是引擎自己的 TSR、100% 分辨率。运行、出图、录片都是这个默认。
+面板上多出两个按钮：
 
 - **画质**：TSR → DLAA（原生分辨率，只用 DLSS 做抗锯齿）→ DLSS 质量（渲染 67% 宽度）→ 平衡（58%）→ 性能（50%）
 - **光线重建**（DLSS Ray Reconstruction）：Lumen 的反射和阴影改由 DLSS 的一个降噪器处理（只在 DLSS 开着时可用）
@@ -361,16 +363,21 @@ python Tools\ue_remote.py Tools\import_slice.py a08_s01 level --style game    # 
 # 经代理很慢的话 curl 加 --noproxy "*"）
 python Tools\install_dlss.py E:\tools\ue_dlss\UE5.8_DLSS4.5Plugin_v8.9.0.zip
 powershell -File Tools\ue.ps1 cpp
-# 出图 / 录片 / 运行时指定
-powershell -File Tools\ue.ps1 play  -Slice a08_s01 -Upscale dlaa -RR
-powershell -File Tools\ue.ps1 shots -Slice a08_s01 -Tag x -Upscale quality      # tsr | dlaa | quality | balanced | performance
+# 运行 / 出图 / 录片：不写 -Upscale 就是 DLAA（没装插件则 TSR）
+powershell -File Tools\ue.ps1 play  -Slice a08_s01                              # 启动就是 DLAA
+powershell -File Tools\ue.ps1 play  -Slice a08_s01 -Upscale quality -RR         # tsr | dlaa | quality | balanced | performance；-RR = 光线重建
+powershell -File Tools\ue.ps1 shots -Slice a08_s01 -Tag x -Upscale tsr          # 要引擎自己的 TSR
 ```
 
 - 插件放在 `Plugins/`（**不进仓库**：NVIDIA 的二进制，按它的 RTX SDK 许可分发），`MishiUE.uproject` 里标成可选：没装照常编译运行，只有 TSR。
 - 游戏模块不依赖插件的模块：按名字找它 Blueprint 库的静态函数（`QueryDLSSSupport` / `EnableDLSS` / `EnableDLSSRR`）来调用，
   分辨率档位就是 `r.ScreenPercentage`。`EnableDLSSRR` 自己知道要关掉哪些 Lumen 的降噪（并在关闭时恢复）。
 - `Config/DefaultEngine.ini`：`bAllowOTAUpdate=False`（不从应用里联网取新模型）、`bShowDLSSSDebugOnScreenMessages=False`（画面里不出调试字）。
-- 路径追踪的机位期间自动切回 TSR（路径追踪自己累积采样、自己降噪）。
+- **路径追踪的机位**：引擎在路径追踪期间本来就不跑任何时域放大器（`FSceneRenderer`："path tracer does its own anti-aliasing"），
+  DLSS 也不跑。所以 DLSS **保持开着不动**，只做两件事：把渲染比例暂时拉回 100%（质量 / 平衡 / 性能档下路径追踪也要画满分辨率），
+  让插件别把闲置的网络丢掉（`r.NGX.FramesUntilFeatureDestruction`：它默认闲置 3 帧就销毁，定格图之间又要重建）。
+  **不要在定格图前后开关 DLSS**：原来是"拍之前关、拍完再开"，第二张定格图就把显卡弄崩了
+  （D3D12 PageFault / device removed：网络刚建好 14 帧又被拆掉）。现在两张表 25 张定格图连着出，网络只建一次。
 - 驱动里的 NGX 仍会在初始化时拉起若干 `nvngx_update.exe` 去联网查更新，可能一直挂着：`ue.ps1` 等的是引擎进程本身，
   结束后把它拉起的这些进程清掉。
 - 帧生成（DLSS-G）没有接：还要装 Streamline 那几个插件（`install_dlss.py --frame-generation`），只对实时运行有意义。
@@ -424,7 +431,7 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 - **光线重建**：细节比 TSR 还多一点，但不比 DLAA 稳（金属边缘、发丝更闪），还掉帧。它是为反射 / 阴影噪声很重的场景准备的，
   这两个场景里 Lumen 自己的降噪已经够干净。想要最锐的单张图可以开，录片不开。
 - 运动中（把三段技能分别用 TSR 和 DLAA 逐帧录下来对比）两者几乎一样，没有看到论坛上说的 DLSS 拖影。
-- 所以**成片用 DLAA 录**（`ue.ps1 tour ... -Upscale dlaa`），4K 的特效定格图也是；路径追踪的定格图不受影响。没装插件就是 TSR，差别不大。
+- 所以**默认就是 DLAA**，成片和 4K 的特效定格图都用它录；路径追踪的定格图不受影响。没装插件就是 TSR，差别不大。
 
 ## 操作
 
@@ -502,6 +509,9 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
   只有一两个轴为负的是真镜像，保留并报警。查法：`female_anim.bin` 里找缩放为负的骨骼，对比骨架参考姿势的缩放。
 - 出图 / 录片的 `-game` 进程也开着 Python 远程执行：它在跑的时候 `ue_remote.py` 可能连到它而不是编辑器
   （报 `module 'unreal' has no attribute 'CustomMaterialOutputType'` 之类缺编辑器类的错）。等出图进程结束再导入。
+- **DLSS 开了又关、关了又开，中间只隔十几帧，显卡会缺页崩溃**（日志 `LogD3D12RHI: Error: PageFault ... GPU Crashed or D3D Device Removed`，
+  进程退出码 3）。出在路径追踪定格图上：每张图"关 DLSS → 拍 → 开 DLSS"，两张图之间只有半秒。见"画质选项"里路径追踪那条。
+  面板上连续点"画质"按钮各档之间至少隔了一次点击的时间，量帧率时每档隔 1 秒以上，都没出过问题。
 - **量帧率时先看显卡是不是只有自己在用**：`nvidia-smi` 看占用和功耗，`timing.json` 里显卡那块秒表（card ms）在 10 和 55 之间跳、
   和画质档位无关，就是有别的程序在分显卡。两天里量出的"DLSS 各档忽快忽慢"全是这个原因，不是 DLSS 的问题。见"画质选项 · 帧率"。
 - **循环的特效不能烘"前 N 秒"拿去循环**：粒子是随机发射的，末帧和首帧是两批粒子，接缝处全体换人。

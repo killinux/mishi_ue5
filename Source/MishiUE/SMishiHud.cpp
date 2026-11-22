@@ -33,8 +33,9 @@ AMishiCameraPawn* SMishiHud::Cam() const
 
 TSharedRef<SWidget> SMishiHud::Button(TAttribute<FText> Label, TFunction<void()> OnClick, TFunction<bool()> IsOn, float Width)
 {
+	// (at least Width, and as wide as its label: a showcase's "zhan dou zhan zi" lost its fourth character to a fixed width)
 	return SNew(SBox)
-		.WidthOverride(Width)
+		.MinDesiredWidth(Width)
 		.HeightOverride(34.f)
 		[
 			SNew(SButton)

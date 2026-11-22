@@ -17,7 +17,8 @@ class MISHIUE_API AMishiPlayerController : public APlayerController
 
 public:
 	/** The picture's upscaler: 0 the engine's TSR at full size, 1 DLAA, 2 DLSS quality, 3 balanced, 4 performance.  1-4 are
-	    NVIDIA's DLSS (Plugins/DLSS - optional, Tools/install_dlss.py): without the plugin or a card that can, 0 stays. */
+	    NVIDIA's DLSS (Plugins/DLSS - optional, Tools/install_dlss.py): without the plugin or a card that can, 0 stays.
+	    The game starts with 1 where DLSS is there, with 0 where it is not. */
 	void SetUpscale(int32 Mode);
 	int32 GetUpscale() const { return Upscale; }
 	/** DLSS ray reconstruction: one trained denoiser for Lumen's reflections and the shadows instead of the engine's own
@@ -131,7 +132,8 @@ private:
 	int32 StillStage = 0;                 // 0 none, 1 the scene is held for a still, 2 its picture is taken
 	int32 StillFrames = 0;                // frames left until the picture
 	bool bStillPathTraced = false;
-	int32 StillUpscale = 0;                 // the upscaler a path-traced still put aside
+	float StillPercent = 0.f;               // what a path-traced still put aside: the share of the picture rendered,
+	int32 StillKeep = -1;                   // and how soon the DLSS plugin throws an idle network away
 	int32 StillSeries = 0;                  // frames of a held pose still to be saved
 	TArray<FShotTime> ShotTimes;
 	double ShotRealStart = 0.0;

@@ -10,7 +10,8 @@
 #   powershell -File Tools\ue.ps1 bench  [-Slice eros15_07] [-ResX 1920 -ResY 1080]      (the frame rate of every upscaler: Tools\shots_bench.json, offscreen)
 #   powershell -File Tools\ue.ps1 editor
 # Without -Shots, a slice's own list is used when there is one: Tools\tour_<slice>.json, shots_<slice>.json, stills_<slice>.json.
-# -Upscale tsr|dlaa|quality|balanced|performance and -RR (ray reconstruction) pick what the picture is made with (play, tour, shots, stills).
+# What the picture is made with (play, tour, shots, stills): NVIDIA's DLSS as DLAA where its plugin is installed and the card can,
+# the engine's TSR where not; -Upscale tsr|dlaa|quality|balanced|performance names another, -RR adds ray reconstruction.
 param(
     [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'stills', 'bench', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
@@ -88,7 +89,8 @@ if ($text -notmatch [regex]::Escape($want)) {
 # and a mesh is drawn from the frame it appears in (the engine otherwise holds it back until its pipeline states are compiled:
 # a shot that jumps into the middle of a skill had none of the skill's effects in it)
 $Capture = '-dpcvars=r.RayTracing.NonBlockingPipelineCreation=0,r.ScreenPercentage=100,r.PSOPrecache.ProxyCreationStrategy=0,r.AsyncPipelineCompile=0'
-# the picture's upscaler: -Upscale dlaa | quality | balanced | performance (NVIDIA's DLSS, Tools/install_dlss.py) or tsr; -RR = ray reconstruction
+# the picture's upscaler when it is not to be the game's own choice (DLAA where DLSS is there, TSR where not):
+# -Upscale tsr | dlaa | quality | balanced | performance; -RR = ray reconstruction
 $Picture = "$(if ($Upscale) { " -MishiUpscale=$Upscale" })$(if ($RR) { ' -MishiRR' })"
 
 
