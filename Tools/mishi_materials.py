@@ -3,12 +3,14 @@ game's own material data.
 
 Masters live in /Game/Mishi/Materials; each is a small graph round a Custom (HLSL) node feeding a MakeMaterialAttributes node:
 
-  M_Mishi_Skin         ROE/Skin: Subsurface Profile (SSP_Mishi_Skin), base x tint, normal + the game's tiled detail normal (faded
-                       with distance), MGAC (G gloss, B occlusion, A curvature), sweat and flush from MPC_Mishi (Wet, Flush)
+  M_Mishi_Skin         ROE/Skin: Subsurface Profile (SSP_Mishi_Skin), base x tint, normal + a relief of furrows and pores (ours,
+                       sized in centimetres of skin; or the game's tiled detail normal), MGAC (G gloss, B occlusion), sweat (a
+                       film, then beads) and blush from MPC_Mishi (Wet, Flush) - SKIN_LOOK
   M_Mishi_Eye          Pinkcore/Heros/Eye rebuilt from its numbers: sclera / iris through the iris mask, the cornea's parallax,
                        the limbal ring, the lids' occlusion map - under a clear coat (the tear film: real highlights)
-  M_Mishi_Hair         hair cards: Hair shading model (strand direction along the card's V), temporal dither for soft edges, a hard
-                       mask in the shadow pass, the strand occlusion map
+  M_Mishi_Hair         hair cards: Default Lit, a highlight drawn out across the strands (anisotropy; the game's shift noise slides
+                       it strand by strand), temporal dither for soft edges, a hard mask in the shadow pass, the strand
+                       occlusion map - HAIR_LOOK
   M_Mishi_Lash         eyebrows / lashes: translucent, per-pixel lit
   M_Mishi_Tears        the wet line on the lower lid: nothing but its highlight (alpha composite)
   M_Mishi_Lit / _Masked / _Glass    rooms (ROE/Environment): MGA, emission, the material's own tiling
@@ -22,7 +24,7 @@ import os
 
 import unreal
 
-VERSION = 10
+VERSION = 17
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -230,6 +232,38 @@ def ensure_skin_profile(rebuild=False):
     return prof
 
 
+# How skin is shown from close by - beyond what the game's materials say (user 11-22: "5", skin and hair in close-ups).  The
+# game has one 256 px detail normal (pc_common_detailskin: a net of cells) on the nude body (tiled 120, 0.5) and on the face
+# (tiled 70, 0.4) - seen in a grazing highlight only, twice as fine on the face as on the body - and none on an armoured
+# body's skin or on his body.
+SKIN_LOOK = {
+    # "relief": Tools/textures/skin_detail.png (Tools/make_skin_detail.py: furrows round little fields, pores) on every skin,
+    # the same size everywhere; "game": the game's own map where a material names one, nothing elsewhere
+    "detail": "relief",
+    # What one tile of the relief covers.  At 2.4 cm its fields are skin's own half millimetre - and nothing of it reaches the
+    # picture: a face 50 cm from the lens has 0.2 mm to a pixel, the relief only takes the highlight down as a whole.  At 6 cm
+    # the fields are 1.25 mm, larger than life as every game draws them, and they read in a close-up.
+    "tile_cm": 6.0,
+    # how deep the furrows are cut, and the pores: a face is pores more than furrows (with the furrows at 0.3 a sunlit cheek
+    # was a net of scales), a body the other way round
+    "lines": {"face": 0.2, "body": 0.4, "tooth": 0.0},
+    "pores": {"face": 0.6, "body": 0.3, "tooth": 0.0},
+    "cavity": 0.5,                  # how far a furrow's or a pore's wall takes the highlight down (and roughens it)
+    "shade": 0.06,                  # and how far it darkens the skin itself: under soft light there is no highlight to show the relief
+    "patches": 0.5,                 # how unevenly it is spread (0: the same everywhere - a pattern; skin is finer here, coarser there)
+    # Sweat.  The scene's wetness (MPC_Mishi "Wet", 0 - 1: the eros mode's phases, or a shot's "wet") is first a film - the
+    # skin shines - and then beads that come up one by one (Tools/textures/sweat.png, Tools/make_sweat.py).
+    "sweat_tile_cm": 8.0,           # what one tile of the beads covers: they are 0.5 - 2.3 mm across
+    "sweat": {"face": 0.75, "body": 1.0, "tooth": 0.0},      # how much of the wetness a zone shows as beads
+    "bead_roughness": 0.05,
+}
+
+
+def skin_zone(name):
+    low = name.lower()
+    return "tooth" if "tooth" in low or "teeth" in low else "face" if "face" in low or "head" in low else "body"
+
+
 # ---------------------------------------------------------------------------------------------------------------- masters
 def build_skin(d, mpc, profile):
     g = Graph("M_Mishi_Skin", shading=unreal.MaterialShadingModel.MSM_SUBSURFACE_PROFILE)
@@ -247,31 +281,94 @@ def build_skin(d, mpc, profile):
     fade = g.custom("return Strength * saturate((400.0 - Depth) / 250.0);", [("Strength", dstrength, ""), ("Depth", depth, "")], F1,
                     desc="detail fade", x=-1500)
     nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
+    # the relief made here (SKIN_LOOK): furrows in R, G and pores in B, A, tiled so that it is as fine on a face as on a thigh
+    rtiling = g.scalar("ReliefTiling", 60.0)
+    ruv = g.custom("return UV * Tiling;", [("UV", uv, ""), ("Tiling", rtiling, "")], F2, desc="relief uv", x=-1900)
+    relief = g.tex("SkinDetailMap", d["grey"], S.SAMPLERTYPE_MASKS, (ruv, ""))
+    lines = g.scalar("ReliefLines", 0.0)
+    pores = g.scalar("ReliefPores", 0.0)
+    patches = g.scalar("ReliefPatches", 0.0)
+    # two slow, uneven fields over the body, in centimetres of skin (the material's UV scale: Tools/mishi_fbx.py): where the
+    # relief is coarser (blobs of a few centimetres) and where the sweat stands (of half a palm)
+    uv_cm = g.scalar("UvCm", 100.0)
+    fields = g.custom("""
+float2 q = UV * UvCm;
+float a = sin(q.x * 0.9 + 1.7 * sin(q.y * 0.6 + 0.5)) * sin(q.y * 1.1 + 1.3 * sin(q.x * 0.7 + 2.0));
+float b = sin(q.x * 0.45 + 1.9 * sin(q.y * 0.38 + 4.0)) * sin(q.y * 0.5 + 1.5 * sin(q.x * 0.33 + 1.0));
+return float2(a, b);
+""", [("UV", uv, ""), ("UvCm", uv_cm, "")], F2, desc="uneven fields", x=-1900)
+    wet = g.collection(mpc, "Wet")
+    # sweat's beads: each comes up when the wetness here passes its own mark
+    stiling = g.scalar("SweatTiling", 20.0)
+    suv = g.custom("return UV * Tiling;", [("UV", uv, ""), ("Tiling", stiling, "")], F2, desc="sweat uv", x=-1900)
+    sweat = g.tex("SweatMap", d["dry"], S.SAMPLERTYPE_MASKS, (suv, ""))
+    beads = g.scalar("SweatBeads", 0.0)
+    bead = g.custom("""
+float near = saturate((320.0 - Depth) / 170.0);          // beads are for close-ups: by 3 m only the film's shine is left
+float local = saturate(Wet) * (0.9 + 0.55 * Field.y) * Amount;
+float on = S.b * saturate((local * 1.2 - S.a) * 6.0) * near;
+float2 n = (S.rg - 0.5) * 2.0 * on;
+Bead = on;
+Rim = saturate(dot(n, n) * 1.5);
+return float3(n, sqrt(saturate(1.0 - dot(n, n))));
+""", [("S", sweat, "RGBA"), ("Wet", wet, ""), ("Field", fields, ""), ("Amount", beads, ""), ("Depth", depth, "")], F3,
+                    [("Bead", F1), ("Rim", F1)], "sweat beads", x=-1500)
+    rel = g.custom("""
+float near = saturate((400.0 - Depth) / 250.0);
+near *= 1.0 + Patches * Field.x;
+near *= 1.0 - Bead;                                       // under a bead the skin's own relief is not seen
+near *= 1.0 - 0.65 * saturate(Wet);                       // and a film of sweat fills the furrows: wet skin is smoother
+float2 l = (D.rg - 0.5) * 2.0 * Lines * near;
+float2 p = (D.ba - 0.5) * 2.0 * Pores * near;
+// where the surface tilts it is a furrow's or a pit's wall: less of the sky gets in there
+Cavity = saturate(length(l) * 1.3 + length(p) * 1.7);
+return normalize(float3(l + p, 1.0));
+""", [("D", relief, "RGBA"), ("Lines", lines, ""), ("Pores", pores, ""), ("Depth", depth, ""), ("Field", fields, ""), ("Patches", patches, ""),
+      ("Bead", bead, "Bead"), ("Wet", wet, "")], F3, [("Cavity", F1)], "relief", x=-1100)
+    one = g.const(1.0, x=-1500)
+    nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", rel, ""), ("Weight", one, "")], F3, desc="normal + relief", x=-700)
+    nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", bead, ""), ("Weight", one, "")], F3, desc="normal + beads", x=-500)
+    cavity = g.scalar("ReliefCavity", 0.5)
+    shade = g.scalar("ReliefShade", 0.0)
     mgac = g.tex("MaskMap", d["mask"], S.SAMPLERTYPE_MASKS, (uv, ""))
     smooth = g.scalar("Smoothness", 0.85)
     occ = g.scalar("OcclusionStrength", 0.7)
     spec = g.scalar("SpecularLevel", 0.45)
     scatter = g.scalar("Scatter", 0.85)
     gloss = g.scalar("GlossBoost", 1.12)
-    wet_rough = g.scalar("WetRoughness", 0.2)
-    flush_tint = g.vector("FlushTint", (1.0, 0.62, 0.60, 1.0))
-    wet = g.collection(mpc, "Wet")
+    wet_rough = g.scalar("WetRoughness", 0.3)       # (0.2 was oil, not sweat - seen once the wetness reached the materials at all)
+    bead_rough = g.scalar("BeadRoughness", 0.05)
+    # blush: the Unity viewer's (RoeSkin.shader: albedo x (1.07, 0.92, 0.90) at full flush) - a warmer, redder skin all over.
+    # (A tint of (1, 0.62, 0.60) stood here, weighted by MGAC.A as "the curved places"; A is no such mask - it follows the gloss -
+    # and the first time the blush reached the materials at all, 11-22, the last phase was a sunburn.)
+    flush_tint = g.vector("FlushTint", (1.07, 0.92, 0.90, 1.0))
     flush = g.collection(mpc, "Flush")
     code = """
-// MGAC: G gloss, B occlusion, A curvature (the thin, curved places: ears, nose, fingers - where blood shows and sweat gathers)
+// MGAC: G gloss, B occlusion
 float3 col = Base * Tint;
-float curve = Mgac.a;
-col = lerp(col, col * FlushTint, saturate(Flush * (0.35 + 0.65 * curve)));
+// sweat is a film first: the skin shines and is a little darker (and the film fills the furrows)
+float film = saturate(Wet);
+col *= lerp(float3(1.0, 1.0, 1.0), FlushTint, saturate(Flush)) * lerp(1.0, 0.92, film);
 float rough = 1.0 - saturate(Mgac.g * Smooth * Gloss);
-rough = lerp(rough, WetRough, saturate(Wet));
+rough = lerp(rough, min(rough, WetRough), film);
+// the relief's furrows and pores: duller and darker in the highlight than the fields between them
+float pit = saturate(Pit * PitDepth) * (1.0 - 0.5 * film);
+col *= 1.0 - PitShade * saturate(Pit);
+rough = saturate(rough + 0.18 * pit);
+float level = Spec * lerp(1.0, Mgac.b, 0.5) * (1.0 + 0.35 * film) * (1.0 - 0.85 * pit);
+// then beads: water, smooth as glass, a little darker at the rim where it bends the light away
+rough = lerp(rough, BeadRough, Bead);
+level = lerp(level, 0.5, Bead);
+col *= 1.0 - 0.12 * Bead * BeadRim;
 Roughness = rough;
 AO = lerp(1.0, Mgac.b, Occ);
-Specular = Spec * lerp(1.0, Mgac.b, 0.5) * (1.0 + 0.6 * saturate(Wet));
+Specular = level;
 return col;
 """
     c = g.custom(code, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mgac", mgac, "RGBA"), ("Smooth", smooth, ""), ("Occ", occ, ""),
                         ("Spec", spec, ""), ("Wet", wet, ""), ("Flush", flush, ""), ("WetRough", wet_rough, ""), ("FlushTint", flush_tint, ""),
-                        ("Gloss", gloss, "")],
+                        ("Gloss", gloss, ""), ("Pit", rel, "Cavity"), ("PitDepth", cavity, ""), ("PitShade", shade, ""),
+                        ("Bead", bead, "Bead"), ("BeadRim", bead, "Rim"), ("BeadRough", bead_rough, "")],
                  F3, [("Roughness", F1), ("AO", F1), ("Specular", F1)], "skin")
     g.out(c, "", "BaseColor")
     g.out(c, "Roughness", "Roughness")
@@ -360,6 +457,19 @@ def build_eye(d):
     return g.finish()
 
 
+# Hair cards' highlight (user 11-22: "5" - the hair is cards, its highlight can be tuned).
+HAIR_LOOK = {
+    "roughness": 0.5,               # with the anisotropy: a band about as wide as the game's own (its Kajiya-Kay power 15)
+    "specular": 0.5,
+    # The band of light across a head of hair: a highlight drawn out ACROSS the strands.  Unreal stretches a highlight along
+    # the material's Tangent for a positive Anisotropy; the Tangent given is the strand (up the cards' texture), so the value
+    # is negative.  (+0.8 stood here since the first hair: the highlight ran along each strand and was never seen as one.)
+    "anisotropy": -0.7,
+    "shift": 0.0,                   # the band slid along the strands (the normal leant along them; + towards the tips)
+    "shift_noise": 1.0,             # how far each strand's own noise (the game's _ShiftNoiseMap) slides it: a ragged band, not a ruled one
+}
+
+
 def build_hair(d):
     """Hair cards.  Default Lit with anisotropy along the strands rather than the Hair model: on cards the Hair model goes
     near black wherever no light falls straight on it (the back of her head in a room lit by one window), while the game's own
@@ -379,14 +489,26 @@ float rootward = saturate((UV.y - 0.55) / 0.4);
 return Base * Tint * shade * (1.0 - Root * rootward);
 """, [("Base", base, "RGB"), ("Tint", tint, ""), ("Mga", mga, "RGB"), ("Occ", occ, ""), ("Root", root, ""), ("UV", uv, "")], F3, desc="hair colour")
     g.out(col, "", "BaseColor")
-    g.out(g.scalar("SpecularLevel", 0.45), "", "Specular")
-    g.out(g.scalar("Roughness", 0.42), "", "Roughness")
-    # the strands run up the cards' texture: the highlight is drawn out across them
-    g.out(g.scalar("Anisotropy", 0.8), "", "Anisotropy")
+    g.out(g.scalar("SpecularLevel", HAIR_LOOK["specular"]), "", "Specular")
+    g.out(g.scalar("Roughness", HAIR_LOOK["roughness"]), "", "Roughness")
+    # the strands run up the cards' texture: the highlight is drawn out across them (HAIR_LOOK "anisotropy")
+    g.out(g.scalar("Anisotropy", HAIR_LOOK["anisotropy"]), "", "Anisotropy")
     g.out(g.vector("StrandDirection", (0.0, 1.0, 0.0, 0.0)), "", "Tangent")
     normal = g.tex("NormalMap", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
     bump = g.scalar("BumpScale", 1.0)
-    g.out(g.custom("return normalize(float3(N.xy * Scale, N.z));", [("N", normal, "RGB"), ("Scale", bump, "")], F3, desc="strand normal"), "", "Normal")
+    # the game's shift noise (streaks along the strands, 0.5 = none): each strand's band a little higher or lower than its neighbour's
+    shift_tiling = g.vector("ShiftTiling", (1.0, 1.0, 0.0, 0.0))
+    suv = g.custom(TILED_UV, [("UV", uv, ""), ("Tiling", shift_tiling, "RGBA")], F2, desc="shift uv", x=-1900)
+    shift_map = g.tex("ShiftMap", d["grey"], S.SAMPLERTYPE_MASKS, (suv, ""))
+    shift = g.scalar("Shift", 0.0)
+    shift_noise = g.scalar("ShiftNoise", 0.0)
+    g.out(g.custom("""
+float3 n = normalize(float3(N.xy * Scale, N.z));
+// a normal leant along the strand (the texture's v) slides the highlight along it
+n.y += Shift + (Noise - 0.5) * 2.0 * NoiseStrength;
+return normalize(n);
+""", [("N", normal, "RGB"), ("Scale", bump, ""), ("Noise", shift_map, "R"), ("Shift", shift, ""), ("NoiseStrength", shift_noise, "")],
+                   F3, desc="strand normal"), "", "Normal")
     # soft edges: a temporal dither of the alpha (TSR resolves it); the shadow pass takes a plain cut so shadows do not crawl
     cutoff = g.scalar("Cutoff", 0.5)
     alpha_gain = g.scalar("AlphaGain", 1.35)
@@ -607,6 +729,8 @@ def build_masters(defaults, force=False):
     out["MPC"] = mpc
     out["SkinProfile"] = profile
     out["_white"] = defaults["white"]
+    out["_skin_detail"] = defaults.get("skin_detail")
+    out["_sweat"] = defaults.get("sweat")
     return out
 
 
@@ -699,11 +823,30 @@ def make_instance(name, d, lookup, masters, folder):
         vector("BaseColor", linear_rgba(base_color))
         scalar("Smoothness", f.get("_Smoothness", 0.85))
         scalar("OcclusionStrength", f.get("_OcclusionStrength", 0.7))
-        if tex("DetailNormalMap", "_DetailNormalMap"):
+        relief = SKIN_LOOK["detail"] == "relief" and masters.get("_skin_detail") is not None and d.get("uv_cm")
+        if relief:
+            # (the relief instead of the game's map, not on top of it)
+            zone = skin_zone(name)
+            mel.set_material_instance_texture_parameter_value(mi, "SkinDetailMap", masters["_skin_detail"])
+            scalar("ReliefPatches", SKIN_LOOK["patches"])
+            scalar("ReliefTiling", d["uv_cm"] / SKIN_LOOK["tile_cm"])
+            scalar("ReliefLines", SKIN_LOOK["lines"][zone])
+            scalar("ReliefPores", SKIN_LOOK["pores"][zone])
+            scalar("ReliefCavity", SKIN_LOOK["cavity"])
+            scalar("ReliefShade", SKIN_LOOK["shade"])
+            scalar("DetailStrength", 0.0)
+        elif tex("DetailNormalMap", "_DetailNormalMap"):
             scalar("DetailTiling", tiling.get("_DetailNormalMap", [100.0])[0])
             scalar("DetailStrength", f.get("_DetailBumpScale", 0.5))
         else:
             scalar("DetailStrength", 0.0)
+        if d.get("uv_cm"):
+            scalar("UvCm", d["uv_cm"])
+            if masters.get("_sweat") is not None:
+                mel.set_material_instance_texture_parameter_value(mi, "SweatMap", masters["_sweat"])
+                scalar("SweatTiling", d["uv_cm"] / SKIN_LOOK["sweat_tile_cm"])
+                scalar("SweatBeads", SKIN_LOOK["sweat"][skin_zone(name)])
+                scalar("BeadRoughness", SKIN_LOOK["bead_roughness"])
     elif kind == "eye":
         tex("IrisMap", "_IrisAlbedoTex")
         tex("ScleraMap", "_ScleraAlbedoTex")
@@ -723,6 +866,16 @@ def make_instance(name, d, lookup, masters, folder):
         vector("BaseColor", linear_rgba(base_color))
         scalar("OcclusionStrength", f.get("_OcclusionStrength", 0.3))
         scalar("Cutoff", f.get("_Cutoff", 0.5))
+        scalar("Shift", HAIR_LOOK["shift"])
+        scalar("Roughness", HAIR_LOOK["roughness"])
+        scalar("SpecularLevel", HAIR_LOOK["specular"])
+        scalar("Anisotropy", HAIR_LOOK["anisotropy"])
+        if tex("ShiftMap", "_ShiftNoiseMap"):
+            t = tiling.get("_ShiftNoiseMap", [1.0, 1.0, 0.0, 0.0])
+            vector("ShiftTiling", t)
+            scalar("ShiftNoise", HAIR_LOOK["shift_noise"])
+        else:
+            scalar("ShiftNoise", 0.0)
     elif kind == "lash":
         tex("BaseMap", "_BaseMap")
         vector("BaseColor", linear_rgba(base_color))

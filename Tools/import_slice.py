@@ -35,11 +35,13 @@ TOOLS = os.path.join(PROJECT, "Tools")
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 import mishi_anim  # noqa: E402
+import mishi_fbx  # noqa: E402
 import mishi_fx  # noqa: E402
 import mishi_look  # noqa: E402
 import mishi_materials  # noqa: E402
 
 importlib.reload(mishi_anim)
+importlib.reload(mishi_fbx)
 importlib.reload(mishi_materials)
 importlib.reload(mishi_fx)
 importlib.reload(mishi_look)
@@ -177,7 +179,8 @@ def default_textures():
     os.makedirs(tmp, exist_ok=True)
     want = {"white": ("T_Mishi_White", (255, 255, 255, 255), "color"), "black": ("T_Mishi_Black", (0, 0, 0, 255), "color"),
             "mask": ("T_Mishi_MaskWhite", (255, 255, 255, 255), "mask"), "mask_black": ("T_Mishi_MaskBlack", (0, 0, 0, 255), "mask"),
-            "flat": ("T_Mishi_FlatNormal", (128, 128, 255, 255), "normal")}
+            "flat": ("T_Mishi_FlatNormal", (128, 128, 255, 255), "normal"), "grey": ("T_Mishi_MaskGrey", (128, 128, 128, 128), "mask"),
+            "dry": ("T_Mishi_Dry", (128, 128, 0, 255), "mask")}
     out = {}
     for key, (name, rgba, role) in want.items():
         if not exists(folder, name):
@@ -193,6 +196,24 @@ def default_textures():
                 setp(tex, "compression_settings", TC.TC_MASKS)
                 setp(tex, "srgb", False)
             eal.save_loaded_asset(tex)
+        out[key] = unreal.load_asset(asset_path(folder, name))
+    # what Tools/make_*.py drew (Tools/textures, in the repository): brought in again when the file has changed
+    for key, name, file in (("skin_detail", "T_Mishi_SkinDetail", "skin_detail.png"), ("sweat", "T_Mishi_Sweat", "sweat.png")):
+        path = os.path.join(PROJECT, "Tools", "textures", file)
+        if not os.path.isfile(path):
+            continue
+        stamp = os.path.join(tmp, name + ".txt")
+        mark = "%d %d" % (os.path.getsize(path), int(os.path.getmtime(path)))
+        have = open(stamp).read().strip() if os.path.isfile(stamp) else ""
+        if not exists(folder, name) or have != mark:
+            import_tasks([path], folder, names=[name])
+            tex = unreal.load_asset(asset_path(folder, name))
+            # numbers, not a picture: two normals' x, y in the four channels - no sRGB, no block compression
+            setp(tex, "compression_settings", unreal.TextureCompressionSettings.TC_VECTOR_DISPLACEMENTMAP)
+            setp(tex, "srgb", False)
+            eal.save_loaded_asset(tex)
+            with open(stamp, "w") as f:
+                f.write(mark)
         out[key] = unreal.load_asset(asset_path(folder, name))
     return out
 
@@ -475,6 +496,17 @@ def step_materials(slice_data, room_materials, her, him):
     defaults = default_textures()
     masters = mishi_materials.build_masters(defaults, force=FORCE and "materials" in STEPS and len(STEPS) == 1)
     game = game_materials(slice_data)
+    # what a unit of each material's UV covers on its body, in centimetres: a tiled detail map is sized by it
+    uv_cm = {}
+    for body in ("female.fbx", "male.fbx"):
+        path = os.path.join(SRC, body)
+        if os.path.isfile(path):
+            try:
+                uv_cm.update(mishi_fbx.uv_scale(path))
+            except Exception as e:
+                warn("uv scale of %s: %s" % (body, e))
+    if MALE_BODY_SLOT in uv_cm:
+        uv_cm.setdefault("pc_a00_nk_body", uv_cm[MALE_BODY_SLOT])
 
     # what every material needs, so the textures can be brought in first
     defs = {}
@@ -516,6 +548,7 @@ def step_materials(slice_data, room_materials, her, him):
     for name, d in defs.items():
         lookup = gtextures if d["source"] != "unity" else textures
         folder = "/Game/Mishi/Characters/Materials" if d["source"] != "unity" else DST + "/Materials"
+        d["uv_cm"] = uv_cm.get(name)
         mi, kind = mishi_materials.make_instance(name, d, lookup, masters, folder)
         instances[name] = mi
         kinds[kind] = kinds.get(kind, 0) + 1

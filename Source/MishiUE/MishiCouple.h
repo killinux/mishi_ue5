@@ -80,9 +80,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	TObjectPtr<UMaterialInterface> HisBodySilhouette;
 
-	/** MPC_Mishi: Wet (sweat) and Flush (blush), which the skin materials read; they follow the phase. */
+	/** MPC_Mishi: Wet (sweat) and Flush (blush), which the skin materials read; they follow the phase.
+	 *  (Not "SkinState": Unreal's Python drops a bool's b, so bSkinState and SkinState were both skin_state there - the
+	 *  importer's assignment went to the bool, failed, and the collection was never set: no sweat, no blush, for weeks.) */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
-	TObjectPtr<UMaterialParameterCollection> SkinState;
+	TObjectPtr<UMaterialParameterCollection> SkinCollection;
 
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	bool bSkinState = true;
@@ -90,6 +92,10 @@ public:
 	/** Seconds the skin takes to follow a new phase. */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float SkinEase = 4.f;
+
+	/** Sweat and blush held at a level (0 - 1) whatever the phase - a shot's "wet" / "flush"; below 0: the phase has them. */
+	float WetHeld = -1.f;
+	float FlushHeld = -1.f;
 
 	/** A fill that goes with the camera and lights the bodies alone (lux; 0: none) - a showcase under one sun: her poses face
 	 *  every way, and what faces away from the sun would be left to the sky.  Tools/mishi_look.py sets it (LOOK "camera_fill"). */

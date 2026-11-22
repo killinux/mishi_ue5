@@ -560,10 +560,7 @@ def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, h
     setp(a, "his_clips", his_anims, warn)
     setp(a, "sounds", sounds, warn)
     if (slice_data.get("kind") or "eros") != "eros":
-        try:
-            a.set_editor_property("b_skin_state", False)       # no blush and sweat following phases that are buttons here
-        except Exception:
-            pass
+        setp(a, "skin_state", False, warn)                     # (bSkinState) no blush and sweat following phases that are buttons here
     if fx_materials:
         setp(a, "fx_materials", fx_materials, warn)            # the skills' baked effects are drawn with these
         setp(a, "fx_light_scale", LOOK.get("fx_light_scale", 3.0), warn)
@@ -573,13 +570,12 @@ def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, h
         setp(a, "camera_fill", LOOK["camera_fill"] * LOOK["light_scale"], warn)
         setp(a, "camera_fill_color", unreal.LinearColor(c[0], c[1], c[2], 1.0), warn)
         setp(a, "camera_fill_angle", LOOK.get("camera_fill_angle", 24.0), warn)
-    for prop, value in (("skin_state", masters.get("MPC")), ("his_body_skin", instances.get("pc_a00_nk_body")),
+    # (Unreal's Python names a bool without its b: "skin_state" is bSkinState.  The collection was once SkinState - the same
+    # Python name - and its assignment here failed without a word: say it when a property is not taken)
+    for prop, value in (("skin_collection", masters.get("MPC")), ("his_body_skin", instances.get("pc_a00_nk_body")),
                         ("his_body_silhouette", instances.get("pc_a00_UnlitSilhouette"))):
         if value is not None:
-            try:
-                a.set_editor_property(prop, value)
-            except Exception:
-                pass                                # a property the C++ of this build does not have yet
+            setp(a, prop, value, warn)
     return a
 
 

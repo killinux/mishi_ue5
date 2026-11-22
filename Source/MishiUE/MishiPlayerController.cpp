@@ -217,6 +217,8 @@ void AMishiPlayerController::StartShots(const FString& File)
 		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
 		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
 		if (O->TryGetNumberField(TEXT("aura"), N)) S.Aura = int32(N);
+		if (O->TryGetNumberField(TEXT("wet"), N)) S.Wet = float(N);
+		if (O->TryGetNumberField(TEXT("flush"), N)) S.Flush = float(N);
 		O->TryGetStringField(TEXT("upscale"), S.Upscale);
 		if (O->TryGetBoolField(TEXT("rr"), bFlag)) S.RayReconstruction = bFlag ? 1 : 0;
 		if (O->TryGetNumberField(TEXT("series"), N)) S.Series = int32(N);
@@ -383,6 +385,10 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->bFx = S.Fx > 0;
 		if (S.Aura >= 0)
 			C->AuraMode = FMath::Clamp(S.Aura, 0, 2);
+		if (S.Wet > -1.5f)
+			C->WetHeld = S.Wet;
+		if (S.Flush > -1.5f)
+			C->FlushHeld = S.Flush;
 		if (!S.Upscale.IsEmpty())
 		{
 			const int32 Picked = UpscaleByName(S.Upscale);

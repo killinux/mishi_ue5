@@ -24,3 +24,6 @@ __pycache__/
 
 # NVIDIA DLSS / Streamline plugins (Tools/install_dlss.py puts them here from NVIDIA's zip: theirs to distribute)
 Plugins/
+
+# previews of the generated textures (for the eye; Tools/make_*.py writes them again)
+Tools/textures/*_preview.jpg

@@ -139,12 +139,12 @@ void AMishiCouple::StepSkin(float DeltaSeconds)
 	static const float WetByPhase[4] = {0.f, 0.2f, 0.45f, 0.8f};
 	const int32 Ph = FMath::Clamp(PhaseNow, 0, 3);
 	const float K = SkinEase > 0.f ? 1.f - FMath::Exp(-DeltaSeconds / SkinEase) : 1.f;
-	Flush = FMath::Lerp(Flush, bSkinState ? FlushByPhase[Ph] : 0.f, K);
-	Wet = FMath::Lerp(Wet, bSkinState ? WetByPhase[Ph] : 0.f, K);
-	if (SkinState)
+	Flush = FlushHeld >= 0.f ? FMath::Min(FlushHeld, 1.f) : FMath::Lerp(Flush, bSkinState ? FlushByPhase[Ph] : 0.f, K);
+	Wet = WetHeld >= 0.f ? FMath::Min(WetHeld, 1.f) : FMath::Lerp(Wet, bSkinState ? WetByPhase[Ph] : 0.f, K);
+	if (SkinCollection)
 	{
-		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinState, TEXT("Wet"), Wet);
-		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinState, TEXT("Flush"), Flush);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("Wet"), Wet);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("Flush"), Flush);
 	}
 }
 
@@ -166,6 +166,13 @@ void AMishiCouple::BeginPlay()
 	bHome = true;
 	if (Data.Kind != TEXT("eros"))
 		bSkinState = false;                     // blush and sweat follow the eros mode's four phases; a showcase's phases are buttons
+	if (!SkinCollection)
+	{
+		// a level made before the importer set it (see the header): the collection every skin material reads
+		SkinCollection = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Mishi/Materials/MPC_Mishi.MPC_Mishi"));
+		if (!SkinCollection)
+			UE_LOG(LogMishi, Warning, TEXT("no MPC_Mishi: the skin shows no sweat and no blush"));
+	}
 	// the bodies' poses after this actor's tick, which sets their clips and times
 	Her->AddTickPrerequisiteActor(this);
 	His->AddTickPrerequisiteActor(this);

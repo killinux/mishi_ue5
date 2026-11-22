@@ -121,15 +121,41 @@ Unity 点 `(x, y, z)` 米 → UE `(-x, z, y) × 100` 厘米；四元数 `(x, y, 
 
 | 母材质 | 要点 |
 |---|---|
-| `M_Mishi_Skin` | Subsurface Profile（Burley，双高光叶）；游戏的 MGAC：G 光泽、B AO、A 曲率；细节法线（毛孔，RNM 混合，4 m 外淡出）；`MPC_Mishi` 的 Wet / Flush 驱动出汗和潮红 |
+| `M_Mishi_Skin` | Subsurface Profile（Burley，双高光叶）；游戏的 MGAC：G 光泽、B AO；自己画的细纹 + 毛孔（见下"皮肤和头发的近景"）；`MPC_Mishi` 的 Wet / Flush 驱动出汗（汗膜 + 汗珠）和潮红 |
 | `M_Mishi_Eye` | 按游戏 Pinkcore/Heros/Eye 的公式重建：巩膜 / 虹膜、视差、角膜缘、眼睑遮蔽；Clear Coat 做角膜高光 |
-| `M_Mishi_Hair` | 发片：Default Lit + 各向异性（沿发丝），时间抖动的软边（TSR 解成半透明），阴影只由发束的实心部分投 |
+| `M_Mishi_Hair` | 发片：Default Lit + 各向异性（高光横跨发丝成一条带，游戏的偏移噪声图让每缕头发的带子高低不一），时间抖动的软边（TSR 解成半透明），阴影只由发束的实心部分投 |
 | `M_Mishi_Lash` / `M_Mishi_Tears` | 睫毛眉毛（逐像素受光的半透明）/ 下眼睑的泪线（只有高光） |
 | `M_Mishi_Lit` / `_Masked` / `_Glass` | 房间：平铺、MGA、自发光；都带逐物体的"镜头淡出"（见下）；一律双面（光追需要，见"踩过的坑"） |
 | `M_Mishi_Flat` / `_Hidden` | 游戏的剪影 / 还没移植的 Effect 层 |
 
 Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线贴图翻转绿色通道；遮罩贴图线性。
 母材质必须勾上 SkeletalMesh + MorphTargets 的 usage，否则 `-game` 里画成灰色默认材质。
+
+### 皮肤和头发的近景（`mishi_materials.py` 的 `SKIN_LOOK` / `HAIR_LOOK`）
+
+样张：`out\skin_hair_samples\`（四张前后对比）。数值都在这两个字典里，改完 `import_slice.py <切片> materials` 重建实例即可
+（动了母材质的图才需要改 `VERSION`）。
+
+- **细纹和毛孔**。游戏只有一张 256 px 的细节法线（`pc_common_detailskin`，一张细胞网），裸体的身体（平铺 120）和脸（平铺 70）用，
+  穿盔甲的那套皮肤和男性身体没有；它只在掠射的高光里看得见，脸上比身上细一倍。现在所有皮肤统一用自己画的
+  `Tools/textures/skin_detail.png`（`python Tools/make_skin_detail.py`，1024 px 无缝：R G = 细纹的法线 xy——皮肤是一张细沟围着
+  小块的网；B A = 毛孔的法线 xy）。平铺数 = 这块材质 1 个 UV 单位在身上是多少厘米 ÷ `tile_cm`：`Tools/mishi_fbx.py` 直接读 FBX
+  算（纯 Python，UE 的 Python 也能跑；身体 150 cm、脸 41 cm），所以脸上和大腿上的毛孔一样大。脸以毛孔为主、身体以细纹为主
+  （`lines` / `pores`）；沟和孔的壁让高光变暗变糙（`cavity`）、颜色略深（`shade`）；强弱在身上不均匀（`patches`）。
+  **尺寸是放大过的**：真实的皮肤小块只有半毫米，镜头在半米外时一个像素就是 0.2 mm，按真实尺寸画只会让整片高光变暗、什么也看不出，
+  所以一格是 1.25 mm（`tile_cm` 6）。柔光下本来就含蓄，阳光、高光和出汗时明显。
+- **出汗**。场景的湿度 `MPC_Mishi.Wet`（0-1）先是一层**汗膜**：粗糙度降到 `WetRoughness` 0.3、颜色暗 8 %、细纹被填平一半多；
+  然后是**汗珠**：`Tools/textures/sweat.png`（`python Tools/make_sweat.py`：R G = 汗珠的法线，B = 汗珠在哪，A = 这颗汗珠在多大的湿度
+  出现）—— 湿度越高冒出来的越多，小的先出、大的后出，直径 0.5-2.3 mm（`sweat_tile_cm` 8），3 m 外只剩汗膜的光泽；
+  身上的分布不均匀（一片多一片少）。脸上的汗珠量是身体的 0.75（`sweat`）。
+- **潮红**：和 Unity 版一样（`RoeSkin.shader`）——满值时颜色 ×(1.07, 0.92, 0.90)，全身略偏暖偏红。
+- **谁来推**：蜜室切片按阶段走（潮红 0.1 / 0.35 / 0.6 / 0.9，汗 0 / 0.2 / 0.45 / 0.8，4 秒缓入，`B` 键 / 面板开关）；展示切片不随阶段变。
+  机位表可以直接指定：`"wet": 0.8`、`"flush": 0.9` 从这个机位起定住，`-1` 还给阶段。
+- **头发高光**。Unreal 的各向异性为正时高光**沿** Tangent 拉长；给的 Tangent 是发丝方向，所以数值必须是负的（`anisotropy` -0.7）
+  高光才横跨发丝成一条带。粗糙度 0.5 时带子的宽度和游戏自己的 Kajiya-Kay（幂 15）差不多。游戏的 `_ShiftNoiseMap`
+  （沿发丝的条纹噪声）让法线沿发丝前后倾一点（`shift_noise`），每缕头发的高光位置不同，带子是参差的而不是一条直线。
+  在房间的柔光里几乎没有高光可言，区别主要在阳光下（展示切片）。
+- **开销**：同一时刻前后各测一次（1080p DLAA，蜜室房间）45.2 / 44.6 / 47.8 fps → 45.5 / 45.5 / 47.3 fps，量不出差别。
 
 ## 灯光（`mishi_look.py`）
 
@@ -189,7 +215,8 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 `up` = 画面的上方向也按骨骼轴，躺着的脸也是正的）、慢慢运动（`drift` 度/秒、`rise`、`dolly`、`push` 厘米/秒）、
 跑一条控制台命令（`cmd`，做对照实验用）、切换男性画法（`his_style`）、显示面板（`hud`）、
 换画质（`upscale`: tsr / dlaa / quality / balanced / performance，`rr`: 光线重建开或关——和面板按钮走同一条路）、
-开关展示切片的弹簧 / 技能特效 / UR 光环（`springs`、`fx`: true / false，`aura`: 0 关 / 1 战斗 / 2 常开）。
+开关展示切片的弹簧 / 技能特效 / UR 光环（`springs`、`fx`: true / false，`aura`: 0 关 / 1 战斗 / 2 常开）、
+定住出汗和潮红的程度（`wet`、`flush`: 0-1，-1 还给阶段）。
 带 `hold`（秒）的机位先把场景定住再拍；再带 `series`: N 就把定住的姿势连拍 N 帧（`<名字>_00.png` …）。
 每次运行还在图片旁边写一份 `timing.json`：每个机位跑了多少帧、用了多久、每一帧的耗时，以及引擎自己的四块秒表
 （游戏线程 / 渲染线程 / RHI 线程 / 显卡，就是 `stat unit` 显示的那几个数）。
@@ -452,6 +479,15 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 
 ## 踩过的坑
 
+- **Unreal 的 Python 把 bool 属性名开头的 b 去掉**：C++ 里同时有 `bSkinState`（开关）和 `SkinState`（材质参数集）时，两个在 Python 里都叫
+  `skin_state`，拿到的是那个 bool。导入脚本给它赋参数集失败，又被一句 `except: pass` 吞掉——结果参数集从来没挂上，
+  **UE 版的出汗和潮红几个星期里一直没生效**，直到 11-22 做汗珠时三档湿度拍出来一模一样才发现。现在参数集叫 `SkinCollection`，
+  没挂时 BeginPlay 自己按路径加载，赋值失败会报警告。教训：属性名不要只差一个 b；`set_editor_property` 的失败不要静默。
+- 各向异性的符号：见"皮肤和头发的近景"。+0.8 用了很久，高光一直是顺着发丝的亮线，没人把它当高光带。
+- 材质 Custom 节点接向量参数要选 `RGBA` 输出：默认输出是 RGB，代码里写 `.zw` 编译失败，游戏里整个材质变成灰色棋盘格
+  （日志 `Failed to compile Material`）。
+- 实例参数写了一半脚本就报错的话，实例已经被 `clear_all_material_instance_parameters` 清空——同样是一头灰发；修好脚本重跑即可。
+- 测帧率要同一时刻 A/B：笔记本显卡热了以后同一画面会慢 7 %（下午 49 fps，傍晚 45 fps），和改动无关。
 - Python 里结构体数组的元素是拷贝：改完要收集起来整个赋回去（骨骼网格的材质槽就是这样丢的）。
 - 导入骨架后要立刻 `save_directory`，否则网格的 skeleton 回来是 None。
 - `unreal.Quat4f` 不能带值构造；`set_bone_track_keys` 要 `unreal.Vector` / `unreal.Quat`。
@@ -539,6 +575,8 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 - 蜜室切片的 Effect 层（液体、粒子）：可以走展示切片同一条"Unity 烘焙、UE 回放"的路；或者 Niagara + 贴花（要在编辑器里手搭）
 - 蜜室切片的弹簧物理（`springs` 目前只有展示切片在配；蜜室的动作是手 K 的，头发不动）、胸部
 - 特效：MutateDistortion 的屏幕扭曲部分没做（这个角色的特效没用到）；路径追踪里看不到特效
-- Groom 发丝、Substrate 皮肤（带汗水涂层）、路径追踪的动态片段（Movie Render Queue）
+- Groom 发丝（没有发丝数据，只有发片）、Substrate 皮肤、路径追踪的动态片段（Movie Render Queue）
+- 头发近看像"铁丝"：发片贴图只有 512 px，每缕画得粗。可以试 AI 放大贴图，或在材质里把每缕再分细
+- 潮红只是全身偏暖；脸颊 / 耳朵 / 胸口的局部红晕需要一张区域遮罩（游戏的 MGAC.A 不是）
 - 回忆模式、换身体、更多场景和房间、选择菜单
 - 打包（Cook）：中文字体在打包版里需要带一个 CJK 字体
