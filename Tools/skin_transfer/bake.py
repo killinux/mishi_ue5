@@ -1,4 +1,4 @@
-"""python Tools/skin_transfer/bake.py <corr.npz> <material> [--pack DIR] [--out DIR] [--wet-size N]
+"""python Tools/skin_transfer/bake.py <corr.npz> <material> [--own ALBEDO.png] [--pack DIR] [--out DIR] [--wet-size N]
 
 A skin pack's maps, painted for another body, drawn into a target material's own UV layout: every pixel of the target knows
 which point of the pack's body lies there (correspond.py), so each map is read there.  System Python (numpy, Pillow).
@@ -18,13 +18,18 @@ What is taken, and how (the pack here: Hanmen's NEXT-GEN for HoneySelect 2 - PAC
   <material>_hm_wn.png   the rivulets and drops as a normal map (from the two masks as heights, in the target's layout).
 
 A pixel whose point on the pack's body is far off (an ear's inside, a nail: correspond.py's "far") stays neutral.
+
+--own: the target material's own colour map.  Where the target has painted a feature of its own - an areola, the navel,
+the genitals: much redder or much darker than the skin round it - the pack's relief, colour, gloss and veins are left out
+(with a soft rim): its skin there was made for another body's features, a few millimetres beside these.  On the pack's side
+the same holds for the body's relief where the pack's own colour map shows a feature (its "keep").  Sweat stays.
 """
 import argparse
 import os
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 Image.MAX_IMAGE_PIXELS = None
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -72,6 +77,7 @@ class Source:
             strong = np.maximum(strong, np.abs(mid / smooth - 1.0))
         keep = 1.0 - np.clip((strong - 0.02) / 0.03, 0.0, 1.0)
         keep = np.clip(low(keep.astype(np.float32), cells * 2), 0.0, 1.0)
+        self.keep = np.clip(keep * 255.0, 0, 255).astype(np.uint8)
         # (a factor within 12 % of 1: a pore, a mottle; a mole or a freckle - a skin's own mark, not its texture - is cut down to that)
         self.spots = float((ratio.min(axis=2) < 0.8).mean())
         self.colour = np.clip((1.0 + (np.clip(ratio, 0.88, 1.12) - 1.0) * keep[..., None]) * 127.5, 0, 255).astype(np.uint8)
@@ -105,6 +111,28 @@ def sample(img, u, v):
     a, b = img[y0, x0].astype(np.float32), img[y0, x0 + 1].astype(np.float32)
     c, d = img[y0 + 1, x0].astype(np.float32), img[y0 + 1, x0 + 1].astype(np.float32)
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+
+
+def own_marks(path, part, n):
+    """Where the target's own colour map paints a feature (0 plain skin .. 1 a feature), n x n, with a soft rim."""
+    work = min(n, 2048)
+    a = np.asarray(Image.open(path).convert("RGB").resize((work, work), Image.LANCZOS)).astype(np.float32)
+    step = n // work
+    skin = part[step // 2::step, step // 2::step] > 0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    red = (r - g) / np.maximum(r, 1.0)
+    lum = (r + g + b) / 3.0
+    red0, lum0 = float(np.median(red[skin])), float(np.median(lum[skin]))
+    # (a knee's or a sole's blush is 0.05 - 0.09 redder than the skin's median, an areola 0.2: the mark begins at 0.12)
+    mark = np.maximum(np.clip((red - red0 - 0.12) / 0.06, 0.0, 1.0), np.clip((lum0 - lum - 60.0) / 40.0, 0.0, 1.0))
+    mark[~skin] = 0.0
+    im = Image.fromarray((mark * 255).astype(np.uint8))
+    px = max(int(round(work / 2048.0 * 9)) | 1, 3)                       # about 7 mm on a body's map
+    im = im.filter(ImageFilter.MaxFilter(px)).filter(ImageFilter.GaussianBlur(px * 0.6))
+    out = np.asarray(im.resize((n, n), Image.BILINEAR)).astype(np.float32) / 255.0
+    print("  the target's own features (%s): %.2f %% of its skin (redness %.3f, brightness %.0f at the median)" % (
+        os.path.basename(path), 100.0 * (mark[skin] > 0.5).mean(), red0, lum0))
+    return np.clip(out * 1.5, 0.0, 1.0)
 
 
 def turns(xs, ys, part):
@@ -145,6 +173,7 @@ def main():
     ap.add_argument("--pack", default=os.path.join(HERE, "..", "..", "_work", "hs2", "pack"))
     ap.add_argument("--out", default=os.path.join(HERE, "..", "..", "Import", "_local", "skin"))
     ap.add_argument("--wet-size", type=int, default=4096)
+    ap.add_argument("--own", help="the target material's own colour map: its painted features keep their own skin")
     a = ap.parse_args()
     t0 = time.time()
     corr = np.load(a.corr)
@@ -154,6 +183,7 @@ def main():
     print("%s: %d px, %.1f %% skin (%.1f %% from the pack's head)" % (a.material, n, 100.0 * (part > 0).mean(), 100.0 * (part == 2).sum() / max((part > 0).sum(), 1)))
     sources = {k: Source(a.pack, spec) for k, spec in PACK.items() if (part == k).any()}
     os.makedirs(a.out, exist_ok=True)
+    marks = own_marks(a.own, part, n) if a.own else None
 
     normal = np.zeros((n, n, 3), np.uint8)
     normal[...] = (128, 128, 255)
@@ -178,14 +208,19 @@ def main():
             uu, vv = u[m].astype(np.float64), v[m].astype(np.float64)
             # the pack's relief there: x along its picture's right, y (OpenGL) up its picture -> along its picture's down: -y
             dx, dy = sample(s.nx, uu, vv), -sample(s.ny, uu, vv)
+            # how much of the pack's skin is taken here: none on the target's own features, and (the body's relief) none where
+            # the pack's body has a feature of its own
+            weight = np.ones(len(uu), np.float32) if marks is None else 1.0 - marks[r0:r1][m]
+            relief = weight * (sample(s.keep, uu, vv) / 255.0) if k == 1 else weight
+            dx, dy = dx * relief, dy * relief
             tx = q11[m] * dx + q21[m] * dy
             ty = q12[m] * dx + q22[m] * dy
             tz = np.sqrt(np.clip(1.0 - tx * tx - ty * ty, 0.0, 1.0))
             out = normal[r0:r1]
             out[m] = np.clip(np.stack([tx, ty, tz], -1) * 127.5 + 127.5, 0, 255).astype(np.uint8)
             cc = colour[r0:r1]
-            rgb = sample(s.colour, uu, vv)
-            g = sample(s.gloss, uu, vv)
+            rgb = 127.5 + (sample(s.colour, uu, vv) - 127.5) * weight[:, None]
+            g = 127.5 + (sample(s.gloss, uu, vv) - 127.5) * weight
             cc[m] = np.clip(np.concatenate([rgb, g[:, None]], 1) + 0.5, 0, 255).astype(np.uint8)
     Image.fromarray(normal).save(os.path.join(a.out, a.material + "_hm_n.png"), compress_level=3)
     Image.fromarray(colour).save(os.path.join(a.out, a.material + "_hm_c.png"), compress_level=3)
@@ -206,6 +241,8 @@ def main():
         cols = [sample(s.run, uu, vv), sample(s.drop, uu, vv),
                 sample(s.veins, uu, vv) if s.veins is not None else np.zeros(len(uu), np.float32),
                 sample(s.thin, uu, vv) if s.thin is not None else np.zeros(len(uu), np.float32)]
+        if marks is not None:
+            cols[2] = cols[2] * (1.0 - marks[step // 2::step, step // 2::step][m])        # no vein across an areola
         wet[m] = np.clip(np.stack(cols, 1) + 0.5, 0, 255).astype(np.uint8)
     Image.fromarray(wet).save(os.path.join(a.out, a.material + "_hm_w.png"), compress_level=3)
     # the water as a height: a rivulet a round ridge, a drop a low dome - and its slope as a normal (x right, y down)

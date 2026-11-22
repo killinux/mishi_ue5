@@ -183,7 +183,14 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a08_hd_skin_8192.npz pc_a08_hd_skin
   python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a_nk_face_4096.npz pc_a_nk_face
   python Tools\ue_remote.py Tools\import_slice.py a08_s01 materials
+  # 蜜室切片的裸体身体：同样三步（fit 不写 --skin 就是 pc_a01_nk_body + pc_a_nk_face），烘焙带 --own
+  & $B -b --factory-startup --python Tools\skin_transfer\fit.py -- _work\hs2\body_female.npz Import\eros15_07\female.fbx _work\hs2\fit_nude.npz
+  & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_female.npz _work\hs2\fit_nude.npz Import\eros15_07\female.fbx pc_a01_nk_body 8192 _work\hs2\corr_nude_pc_a01_nk_body_8192.npz
+  python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a01_nk_body_8192.npz pc_a01_nk_body --own E:\game_export\RiseOfEros\_meta\_hq_materials\textures\pc_a01_nk_body_rgbx_Albedo.png
+  python Tools\ue_remote.py Tools\import_slice.py eros15_07 materials
   ```
+
+  （脸的材质 `pc_a_nk_face` 两个切片共用一个实例，贴图取自 a08 那次配准；裸体身体取自它自己的配准。）
 
   - **配准**（`fit.py`）：两个身体都是 T 姿、朝向相同。先用两套骨架里"同一个地方"的骨骼做地标（髋、膝、肩、肘、每个指节；
     以及长在特征上的骨骼：乳头、嘴角、上下唇、鼻翼、眼球、眉头眉尾），求一个把每个地标送到对应位置、其余地方尽量平滑的
@@ -196,7 +203,10 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
     **转到**目标 UV 的方向（两套 UV 在皮肤上的走向不同；转角取"源 UV 沿目标 UV 怎么变"最近的旋转，一边是另一边的镜像时取镜像）；
     `_c` RGB 肤色的细节（源肤色除以它自己的模糊：毛孔、细色斑；嘴唇、鼻孔这类"它的身体的特征"按中尺度对比度去掉，
     幅度限制在 ±12 %），A 光泽的细节；`_w` R 汗流、G 水珠 / 湿斑、B 血管、A 厚度；`_wn` 汗流和水珠的法线。
-    两层皮肤相距超过 1.2 cm 的像素（耳朵里面、指甲）保持中性。
+    两层皮肤相距超过 1.2 cm 的像素（耳朵里面、指甲）保持中性。`--own <目标材质自己的肤色图>`：目标自己画了特征的地方
+    （乳晕、肚脐、私处——比周围皮肤红得多或暗得多；膝盖、脚底那种淡红晕不算）不套皮肤包的微法线、肤色、光泽和血管，
+    边缘柔和过渡：那里的皮肤是给另一个身体的特征画的，会偏开几毫米；皮肤包自己画了特征的地方，身体的微法线同样不取。汗照常。
+    裸体身体要带这个参数烘（a08 露出的皮肤没有这些部位，脸不带——嘴唇的纹理对得上，留着）。
   - **材质**（`SKIN_LOOK["baked"]`）：微法线按源的 2 倍强度叠在 ROE 法线上（按 1 倍在半米外和没有一样——比像素细的起伏会被
     平均掉），平铺块留 0.7 作为"放大的颗粒"；肤色细节 ×1.5、光泽细节 ×1.0、血管 0.3、厚度让薄的地方多透一点光；出汗时
     水珠从最湿的地方先出现，湿度过 0.55 后汗流才出来，原来均匀的小汗珠减半。
