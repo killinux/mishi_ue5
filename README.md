@@ -27,6 +27,8 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 | `Tools/shots_<切片>.json` / `tour_<切片>.json` / `stills_<切片>.json` | 某个切片自己的三张表（有就用它，现在有 `a08_s01` 的） |
 | `Tools/sheet.py` / `tour_audio.py` | 检查图拼版 / 巡游片的音轨合成 |
 | `Tools/install_dlss.py` | 把 NVIDIA 的 DLSS 插件从它的 zip 装进本工程的 `Plugins/`（可选，见"画质选项"） |
+| `Tools/bench_table.py` / `shots_bench.json` | 各档画质的帧率：`ue.ps1 bench` 在**同一次运行**里轮流切换并计时；显卡被别的程序分走时也读得出可信的数（见"画质选项"） |
+| `Tools/still_noise.py` / `shots_noise.json` | 定住一个姿势连拍 N 帧，量画面自己的闪动和细节（比较抗锯齿 / 降噪方案用） |
 | `Tools/check_tracks.py` / `check_parents.py` | 体检：动作轨道里的阶梯、镜像骨骼、手腕错位（导入前，系统 Python）/ 丢了父级的材质实例（编辑器里跑） |
 | `Tools/film_scan.py` / `film_jitter.py` / `film_sheet.py` | 成片检查：被挡住的帧 / 帧间跳变 / 拼版 |
 | `Tools/make_showcase.py` / `mishi_sky.py` | 展示切片：Unity 导出的原始数据 → `slice.json`（含骨骼布料的配置、特效索引）/ 把舞台的天空盒烘焙成一张经纬图 |
@@ -185,7 +187,11 @@ URP 灯光强度 × π = UE 的 lux / candela（URP 的漫反射没有 1/π）�
 `-MishiShots=<json>` 是一张机位表，每个机位可以：按一个阶段键（`phase`）、跳到部位的某一秒（`at`）、
 绕游戏的目标转（`yaw` / `y` / `zoom`）或绕她的一根骨骼（`bone` + `from` 骨骼轴方向 + `distance`；
 `up` = 画面的上方向也按骨骼轴，躺着的脸也是正的）、慢慢运动（`drift` 度/秒、`rise`、`dolly`、`push` 厘米/秒）、
-跑一条控制台命令（`cmd`，做对照实验用）、切换男性画法（`his_style`）、显示面板（`hud`）。
+跑一条控制台命令（`cmd`，做对照实验用）、切换男性画法（`his_style`）、显示面板（`hud`）、
+换画质（`upscale`: tsr / dlaa / quality / balanced / performance，`rr`: 光线重建开或关——和面板按钮走同一条路）。
+带 `hold`（秒）的机位先把场景定住再拍；再带 `series`: N 就把定住的姿势连拍 N 帧（`<名字>_00.png` …）。
+每次运行还在图片旁边写一份 `timing.json`：每个机位跑了多少帧、用了多久、每一帧的耗时，以及引擎自己的四块秒表
+（游戏线程 / 渲染线程 / RHI 线程 / 显卡，就是 `stat unit` 显示的那几个数）。
 不带 `-MishiTour` 时每个机位存一张图；带上就逐帧存，机位表就是分镜表。
 录片时游戏没有声音设备，但把"哪一帧开始放哪个声音"写进 `timeline.json`，`tour_audio.py` 据此用 ffmpeg
 合成和游戏里一样的音轨（语音被下一句打断、部位音效循环到下一段、BGM 垫底）。
@@ -315,6 +321,8 @@ python Tools\ue_remote.py Tools\import_slice.py a08_s01 level --style game    # 
 | 颜色 | — | 饱和度 0.93，高光偏暖 (1.04, 1, 0.95)、暗部偏冷 (0.95, 1, 1.06) |
 | 其它 | 暗角 0.25 / 0.3 | 暗角 0.42，胶片颗粒 0.18 |
 
+11-22 起两部成片和所有定格图都是电影风（成片用 DLAA 录）；之前游戏风的留在旁边作对照：`out\*_tour_game.mp4`、`out\stills\*_game`。
+
 量出来（`Tools/measure_look.py`：画面亮度分位数、皮肤亮度；`Tools/ab_sheet.py` 把两个检查图文件夹拼成左右对比）：皮肤中位数基本不变（0.5–0.6），整幅画面中位数 0.49 → 0.36（a08），
 接近全黑的像素 3% → 6%（a08）、4% → 12%（蜜室全景）。`grade` 里的键就是引擎后期设置的名字，想加什么直接加。
 
@@ -343,6 +351,57 @@ powershell -File Tools\ue.ps1 shots -Slice a08_s01 -Tag x -Upscale quality      
 - 驱动里的 NGX 仍会在初始化时拉起若干 `nvngx_update.exe` 去联网查更新，可能一直挂着：`ue.ps1` 等的是引擎进程本身，
   结束后把它拉起的这些进程清掉。
 - 帧生成（DLSS-G）没有接：还要装 Streamline 那几个插件（`install_dlss.py --frame-generation`），只对实时运行有意义。
+- 插件自己记着光线重建：关 DLSS 时它顺手把光线重建关掉，但记下"之前开着"，下次开 DLSS 又自动打开——面板这时显示的却是关。
+  所以 `SetUpscale` 每次都明确告诉它要不要（`EnableDLSSRR`）。
+
+### 帧率（`ue.ps1 bench`）
+
+```powershell
+powershell -File Tools\ue.ps1 bench -Slice a08_s01 -ResX 3840 -ResY 2160 -Tag r2160     # 离屏渲染，任何分辨率都行；不写分辨率 = 1920x1080
+python Tools\bench_table.py Saved\MishiShots\a08_s01_bench_r1080 Saved\MishiShots\a08_s01_bench_r1440 Saved\MishiShots\a08_s01_bench_r2160
+```
+
+`Tools/shots_bench.json` 在**一次运行**里把八种组合轮四遍（机位表的 `upscale` / `rr`），每次先让它稳定 1 秒、再量 3 秒同一段展示动作，
+并各存一张图。出图时场景的时钟固定每秒 30 步、画面能多快就多快，所以"帧数 / 用时"就是这档画质能跑到的帧率。
+a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
+
+| 画质 | 1920×1080 | 2560×1440 | 3840×2160 |
+|---|---|---|---|
+| TSR 100%（默认） | 89 | 63 | 32 |
+| DLAA | 96 | 73 | 36 |
+| DLAA + 光线重建 | 74 | 48 | 23 |
+| DLSS 质量（67%） | 112 | 113 | 63 |
+| DLSS 质量 + 光线重建 | 110 | 83 | 44 |
+| DLSS 平衡（58%） | 114 | 103 | 73 |
+| DLSS 性能（50%） | 128 | 112 | 81 |
+| DLSS 性能 + 光线重建 | 133 | 116 | 69 |
+
+- 110–130 帧已经是 CPU 的上限（渲染线程一帧 7.5–9 ms）：1080p 和 1440p 上 DLSS 各档之间的差别在测量误差之内。
+  分辨率越高差得越开：4K 下质量档是 TSR 的 2 倍，性能档 2.6 倍。
+- DLAA 比 TSR 还快一点（TSR 在全分辨率上自己就不便宜）；光线重建要掉 15–35% 的帧率。
+- **机器不空闲也能量**：显卡被别的程序分走时（另一个窗口在跑 Blender 批处理：显卡 100% 十几秒、歇两三秒，循环），
+  同一档画质一帧要么 10 ms 要么 55 ms，整段平均出来的数毫无意义（TSR 16–91 帧都量到过）。`bench_table.py` 把每档四轮的逐帧耗时
+  切成 45 帧的片段，只认**没被打扰**的那些（最快片段的 1.25 倍以内），取它们的中位数；"undisturbed" 一列是这种片段占的比例，
+  空闲的机器上接近 100%。某一格比上下两格离谱、比例又只有百分之几，就是那一档从头到尾没碰上空档：再跑一遍，
+  同一分辨率的几次运行可以一起交给 `bench_table.py`，它会合并。
+- 单帧的耗时不能直接用：离屏出图没有交换链把游戏线程拦住，它会领先显卡几帧，然后一次等上几百毫秒（6 6 6 6 60 19 403 …）。
+
+### 怎么选（量出来的）
+
+`Tools/shots_noise.json` + `Tools/still_noise.py`：把姿势定住、关掉胶片颗粒，连拍 16 帧。场景里什么都没动，帧与帧之间的差别
+就是渲染器自己的不安分（Lumen 的噪声、抗锯齿的抖动、亮边的闪烁）。a08 和蜜室各三个机位（全身 / 胸 / 脸），1920×1080：
+
+| | TSR | DLAA | DLAA + 光线重建 |
+|---|---|---|---|
+| 闪动（每个像素偏离 16 帧平均值多少，8 位亮度级） | 0.21–0.34 | **0.15–0.22** | 0.16–0.32 |
+| 最闪的 1% 画面 | 0.9–3.9 | **0.6–1.3** | 0.7–3.6 |
+| 细节（16 帧平均图的拉普拉斯标准差，TSR = 1） | 1 | 0.90–0.95 | 1.01–1.10 |
+
+- **DLAA 最稳**：闪动比 TSR 低三四成，差别主要在发丝上；细节略少一点（TSR 带锐化）。
+- **光线重建**：细节比 TSR 还多一点，但不比 DLAA 稳（金属边缘、发丝更闪），还掉帧。它是为反射 / 阴影噪声很重的场景准备的，
+  这两个场景里 Lumen 自己的降噪已经够干净。想要最锐的单张图可以开，录片不开。
+- 运动中（把三段技能分别用 TSR 和 DLAA 逐帧录下来对比）两者几乎一样，没有看到论坛上说的 DLSS 拖影。
+- 所以**成片用 DLAA 录**（`ue.ps1 tour ... -Upscale dlaa`），4K 的特效定格图也是；路径追踪的定格图不受影响。没装插件就是 TSR，差别不大。
 
 ## 操作
 
@@ -419,6 +478,8 @@ powershell -File Tools\ue.ps1 shots -Slice a08_s01 -Tag x -Upscale quality      
   只有一两个轴为负的是真镜像，保留并报警。查法：`female_anim.bin` 里找缩放为负的骨骼，对比骨架参考姿势的缩放。
 - 出图 / 录片的 `-game` 进程也开着 Python 远程执行：它在跑的时候 `ue_remote.py` 可能连到它而不是编辑器
   （报 `module 'unreal' has no attribute 'CustomMaterialOutputType'` 之类缺编辑器类的错）。等出图进程结束再导入。
+- **量帧率时先看显卡是不是只有自己在用**：`nvidia-smi` 看占用和功耗，`timing.json` 里显卡那块秒表（card ms）在 10 和 55 之间跳、
+  和画质档位无关，就是有别的程序在分显卡。两天里量出的"DLSS 各档忽快忽慢"全是这个原因，不是 DLSS 的问题。见"画质选项 · 帧率"。
 - **特效材质第一次被画时会漏**：引擎可能还在给它建管线状态，这几帧就不画——技能 1 的第一刀在出图里时有时无地缺一串火花，
   画面渲染得快的时候（DLSS 质量档）整帧特效都没有。开场时 `FMishiFx::Prewarm` 用每个特效材质各画一个半毫米的三角形（24 帧）。
 - **出图进程的日志窗口被点一下，整个进程就暂停**（Windows 控制台的"快速编辑"：标题变成"选择 ..."，写日志的线程卡住）。

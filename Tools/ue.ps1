@@ -7,10 +7,12 @@
 #   powershell -File Tools\ue.ps1 tour   [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (Tools\tour.json frame by frame -> out\<slice>_tour.mp4, with sound)
 #   powershell -File Tools\ue.ps1 shots  [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (look-dev stills -> Saved\MishiShots\<slice>_<tag>)
 #   powershell -File Tools\ue.ps1 stills [-Slice eros15_07] [-Shots <file>] [-Tag <x>]   (path-traced stills: Tools\shots_stills.json -> out\stills\<slice>, 2560x1440 offscreen)
+#   powershell -File Tools\ue.ps1 bench  [-Slice eros15_07] [-ResX 1920 -ResY 1080]      (the frame rate of every upscaler: Tools\shots_bench.json, offscreen)
 #   powershell -File Tools\ue.ps1 editor
 # Without -Shots, a slice's own list is used when there is one: Tools\tour_<slice>.json, shots_<slice>.json, stills_<slice>.json.
+# -Upscale tsr|dlaa|quality|balanced|performance and -RR (ray reconstruction) pick what the picture is made with (play, tour, shots, stills).
 param(
-    [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'stills', 'editor')] [string]$Do = 'find',
+    [ValidateSet('find', 'build', 'cpp', 'import', 'play', 'tour', 'shots', 'stills', 'bench', 'editor')] [string]$Do = 'find',
     [string]$Slice = 'eros15_07',
     [switch]$Force,
     [string]$Shots = '',
@@ -189,6 +191,19 @@ switch ($Do) {
         if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
         $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -windowed -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended$Picture" 'shots'
         Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+        exit $code
+    }
+    'bench' {
+        # how fast the picture comes with each upscaler: Tools\shots_bench.json switches through them in ONE run (the same six
+        # seconds of the scene each time, after a second to settle) -> Saved\MishiShots\<slice>_bench[_<tag>]\timing.json and a
+        # picture of each.  Offscreen like the film, so any size can be asked for; nothing else should be using the card.
+        if (-not $Shots) { $Shots = Get-ShotList 'bench' 'shots_bench.json' }
+        if (-not $PSBoundParameters.ContainsKey('ResX')) { $ResX = 1920 }
+        if (-not $PSBoundParameters.ContainsKey('ResY')) { $ResY = 1080 }
+        $dir = Join-Path $Root "Saved\MishiShots\${Slice}_bench$(if ($Tag) { '_' + $Tag })"
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        $code = Invoke-Editor "`"$Project`" /Game/Mishi/Maps/$Slice -game -RenderOffscreen -ForceRes -ResX=$ResX -ResY=$ResY -benchmark -fps=30 $Capture -MishiShots=`"$Shots`" -MishiShotsDir=`"$dir`" -nosound -nosplash -unattended" 'bench'
+        if (Test-Path (Join-Path $dir 'timing.json')) { & python (Join-Path $Root 'Tools\bench_table.py') $dir }
         exit $code
     }
     'editor' {

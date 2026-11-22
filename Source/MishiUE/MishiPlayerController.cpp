@@ -18,6 +18,8 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
+#include "RenderTimer.h"
+#include "DynamicRHI.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
 #include "ShaderCompiler.h"
@@ -73,6 +75,21 @@ bool AMishiPlayerController::HasRayReconstruction()
 	return DlssSupported(TEXT("QueryDLSSRRSupport"));
 }
 
+int32 AMishiPlayerController::UpscaleByName(const FString& Name)
+{
+	static const TCHAR* Names[] = {TEXT("tsr"), TEXT("dlaa"), TEXT("quality"), TEXT("balanced"), TEXT("performance")};
+	for (int32 I = 0; I < UE_ARRAY_COUNT(Names); ++I)
+		if (Name.Equals(Names[I], ESearchCase::IgnoreCase))
+			return I;
+	return INDEX_NONE;
+}
+
+FString AMishiPlayerController::PictureName() const
+{
+	static const TCHAR* Names[] = {TEXT("TSR"), TEXT("DLAA"), TEXT("DLSS quality"), TEXT("DLSS balanced"), TEXT("DLSS performance")};
+	return FString(Names[FMath::Clamp(Upscale, 0, int32(UE_ARRAY_COUNT(Names)) - 1)]) + (bRayReconstruction ? TEXT(" + RR") : TEXT(""));
+}
+
 void AMishiPlayerController::SetUpscale(int32 Mode)
 {
 	// what DLSS renders of the picture's width: all of it (DLAA: its anti-aliasing alone), two thirds, 58 %, half
@@ -84,8 +101,11 @@ void AMishiPlayerController::SetUpscale(int32 Mode)
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
 		Var->Set(Percent[Mode], ECVF_SetByCode);
 	Upscale = Mode;
+	// Ray reconstruction runs inside the DLSS pass: it goes out with DLSS.  The plugin remembers on its own that it was on and
+	// would bring it back with DLSS, whatever the panel shows by then - so it is told each time what is wanted here.
 	if (Mode == 0)
-		bRayReconstruction = false;         // (the plugin puts it out with DLSS)
+		bRayReconstruction = false;
+	DlssEnable(TEXT("EnableDLSSRR"), bRayReconstruction);
 	UE_LOG(LogMishi, Log, TEXT("upscale: %s, %.0f %% of the picture rendered%s"), Mode == 0 ? TEXT("TSR") : Mode == 1 ? TEXT("DLAA") : TEXT("DLSS"), Percent[Mode],
 		bRayReconstruction ? TEXT(", ray reconstruction") : TEXT(""));
 }
@@ -129,11 +149,7 @@ void AMishiPlayerController::BeginPlay()
 	FString UpscaleName;
 	if (FParse::Value(FCommandLine::Get(), TEXT("MishiUpscale="), UpscaleName))
 	{
-		static const TCHAR* Names[] = {TEXT("tsr"), TEXT("dlaa"), TEXT("quality"), TEXT("balanced"), TEXT("performance")};
-		int32 Picked = INDEX_NONE;
-		for (int32 I = 0; I < UE_ARRAY_COUNT(Names); ++I)
-			if (UpscaleName.Equals(Names[I], ESearchCase::IgnoreCase))
-				Picked = I;
+		const int32 Picked = UpscaleByName(UpscaleName);
 		if (Picked == INDEX_NONE)
 		{
 			UE_LOG(LogMishi, Warning, TEXT("-MishiUpscale=%s: not one of tsr, dlaa, quality, balanced, performance"), *UpscaleName);
@@ -195,6 +211,9 @@ void AMishiPlayerController::StartShots(const FString& File)
 		bool bFlag = false;
 		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
 		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
+		O->TryGetStringField(TEXT("upscale"), S.Upscale);
+		if (O->TryGetBoolField(TEXT("rr"), bFlag)) S.RayReconstruction = bFlag ? 1 : 0;
+		if (O->TryGetNumberField(TEXT("series"), N)) S.Series = int32(N);
 		const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
 		if (O->TryGetArrayField(TEXT("offset"), Off) && Off && Off->Num() >= 3)
 			S.BoneOffset = FVector((*Off)[0]->AsNumber(), (*Off)[1]->AsNumber(), (*Off)[2]->AsNumber());
@@ -273,9 +292,21 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	if (StillStage == 1)
 	{
 		// the scene is held: nothing moves until the picture is taken
+		CountFrame();
 		if (--StillFrames <= 0)
 		{
 			const FShot& Held = Shots[ShotIndex];
+			if (StillSeries > 0)
+			{
+				// (one request a frame: the next is asked for when this one has been taken)
+				if (!FScreenshotRequest::IsScreenshotRequested())
+				{
+					FScreenshotRequest::RequestScreenshot(ShotsDir / FString::Printf(TEXT("%s_%02d.png"), *Held.Name, Held.Series - StillSeries), Held.bHud, false);
+					if (--StillSeries == 0)
+						StillStage = 2;
+				}
+				return;
+			}
 			FScreenshotRequest::RequestScreenshot(ShotsDir / (Held.Name + TEXT(".png")), Held.bHud, false);
 			StillStage = 2;
 		}
@@ -305,11 +336,31 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	}
 	if (ShotIndex < 0 || ShotClock >= Shots[ShotIndex].Seconds)
 	{
+		const double Now = FPlatformTime::Seconds();
+		if (ShotIndex >= 0)
+		{
+			FShotTime& T = ShotTimes.AddDefaulted_GetRef();
+			T.Name = Shots[ShotIndex].Name;
+			T.Picture = PictureName();
+			T.Frames = ShotFrameCount;
+			T.Seconds = Now - ShotRealStart;
+			const double Per = 1.0 / FMath::Max(ShotFrameCount, 1);
+			T.GameMs = ShotGameMs * Per;
+			T.RenderMs = ShotRenderMs * Per;
+			T.RhiMs = ShotRhiMs * Per;
+			T.GpuMs = ShotGpuMs * Per;
+			T.FrameMs = MoveTemp(ShotFrameMs);
+		}
+		ShotFrameMs.Reset();
+		ShotRealStart = Now;
+		ShotFrameCount = 0;
+		ShotGameMs = ShotRenderMs = ShotRhiMs = ShotGpuMs = 0.0;
 		++ShotIndex;
 		ShotClock = 0.f;
 		if (ShotIndex >= Shots.Num())
 		{
 			UE_LOG(LogMishi, Log, TEXT("shots: done"));
+			WriteTiming();
 			if (bRecordAll)
 				WriteTimeline();
 			ShotIndex = Shots.Num() - 1;
@@ -324,6 +375,20 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->bSprings = S.Springs > 0;
 		if (S.Fx >= 0)
 			C->bFx = S.Fx > 0;
+		if (!S.Upscale.IsEmpty())
+		{
+			const int32 Picked = UpscaleByName(S.Upscale);
+			if (Picked == INDEX_NONE)
+			{
+				UE_LOG(LogMishi, Warning, TEXT("shot %s: \"upscale\": \"%s\" is not one of tsr, dlaa, quality, balanced, performance"), *S.Name, *S.Upscale);
+			}
+			else
+			{
+				SetUpscale(Picked);
+			}
+		}
+		if (S.RayReconstruction >= 0)
+			SetRayReconstruction(S.RayReconstruction > 0);
 		if (S.Phase >= 0)
 			C->GoPhase(S.Phase);
 		if (S.At >= 0.f)
@@ -383,6 +448,7 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 	bShotStart = false;
 	Cam->SetView(Cam->DefaultYaw() + S.YawOffset + S.Drift * ShotClock, ShotY + S.Rise * ShotClock, ShotZoom * FMath::Max(1.f + S.Dolly * ShotClock, 0.05f));
 	ShotClock += DeltaTime;
+	CountFrame();
 	if (bRecordAll)
 		FScreenshotRequest::RequestScreenshot(ShotsDir / FString::Printf(TEXT("frame_%05d.bmp"), RecordFrame++), S.bHud, false);     // .bmp: no time lost packing
 	else if (ShotClock >= S.Seconds && !S.Name.StartsWith(TEXT("_")))
@@ -430,6 +496,7 @@ void AMishiPlayerController::BeginStill(const FShot& S)
 	}
 	else
 		StillFrames = FMath::Max(1, FMath::RoundToInt(S.Hold * 30.f));
+	StillSeries = bStillPathTraced ? 0 : FMath::Clamp(S.Series, 0, 99);
 	StillStage = 1;
 	UE_LOG(LogMishi, Log, TEXT("still %s: the pose is held for %d frames%s"), *S.Name, StillFrames, bStillPathTraced ? TEXT(", path traced") : TEXT(""));
 }
@@ -453,6 +520,41 @@ void AMishiPlayerController::EndStill()
 	bStillPathTraced = false;
 	HoldScene(false);
 	StillStage = 0;
+}
+
+void AMishiPlayerController::CountFrame()
+{
+	// the engine's own stop watches (what "stat unit" shows), of the frame before this one
+	++ShotFrameCount;
+	const double Now = FPlatformTime::Seconds();
+	if (ShotLastFrame > 0.0)
+		ShotFrameMs.Add(float((Now - ShotLastFrame) * 1000.0));
+	ShotLastFrame = Now;
+	ShotGameMs += FPlatformTime::ToMilliseconds(GGameThreadTime);
+	ShotRenderMs += FPlatformTime::ToMilliseconds(GRenderThreadTime);
+	ShotRhiMs += FPlatformTime::ToMilliseconds(GRHIThreadTime);
+	ShotGpuMs += FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
+}
+
+void AMishiPlayerController::WriteTiming() const
+{
+	// read by Tools/bench_table.py: how fast each shot's frames came
+	FIntPoint Size(0, 0);
+	if (const UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr)
+		if (Viewport->Viewport)
+			Size = Viewport->Viewport->GetSizeXY();
+	FString Text = FString::Printf(TEXT("{\n  \"width\": %d, \"height\": %d,\n  \"shots\": ["), Size.X, Size.Y);
+	for (int32 I = 0; I < ShotTimes.Num(); ++I)
+	{
+		const FShotTime& T = ShotTimes[I];
+		Text += FString::Printf(TEXT("%s\n    {\"name\": \"%s\", \"picture\": \"%s\", \"frames\": %d, \"seconds\": %.4f, \"game_ms\": %.2f, \"render_ms\": %.2f, \"rhi_ms\": %.2f, \"gpu_ms\": %.2f, \"frame_ms\": ["),
+			I ? TEXT(",") : TEXT(""), *T.Name.ReplaceCharWithEscapedChar(), *T.Picture, T.Frames, T.Seconds, T.GameMs, T.RenderMs, T.RhiMs, T.GpuMs);
+		for (int32 F = 0; F < T.FrameMs.Num(); ++F)
+			Text += FString::Printf(TEXT("%s%.2f"), F ? TEXT(", ") : TEXT(""), T.FrameMs[F]);
+		Text += TEXT("]}");
+	}
+	Text += TEXT("\n  ]\n}\n");
+	FFileHelper::SaveStringToFile(Text, *(ShotsDir / TEXT("timing.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
 void AMishiPlayerController::WriteTimeline() const

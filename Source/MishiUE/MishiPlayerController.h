@@ -26,6 +26,10 @@ public:
 	bool GetRayReconstruction() const { return bRayReconstruction; }
 	static bool HasDLSS();
 	static bool HasRayReconstruction();
+	/** tsr, dlaa, quality, balanced, performance -> 0..4 (INDEX_NONE: none of them). */
+	static int32 UpscaleByName(const FString& Name);
+	/** "TSR", "DLAA + RR", "DLSS quality" ...: what the picture is made with now. */
+	FString PictureName() const;
 
 	AMishiPlayerController();
 
@@ -88,6 +92,21 @@ private:
 		bool bHideHer = false;                // "hide_her": him alone (looking at his hands, his wrists)
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
+		FString Upscale;              // "upscale": the picture's upscaler from this shot on (tsr, dlaa, quality, balanced, performance)
+		int32 RayReconstruction = -1; // "rr": DLSS ray reconstruction on or off from this shot on (-1: as it is)
+		int32 Series = 0;             // "series": with "hold", this many frames of the held pose are saved (<name>_00.png ...) - what
+		                              // differs between them is the renderer's own unrest (Tools/still_noise.py)
+	};
+	/** How long a shot took: the scene's clock runs at 30 steps a second in a capture, the frames come as fast as they are
+	    rendered - Tools/ue.ps1 bench reads the frame rates of the upscalers from it (timing.json beside the pictures). */
+	struct FShotTime
+	{
+		FString Name, Picture;
+		int32 Frames = 0;
+		double Seconds = 0.0;
+		double GameMs = 0.0, RenderMs = 0.0, RhiMs = 0.0, GpuMs = 0.0;    // a frame's share of each thread and of the card, on average
+		TArray<float> FrameMs;            // every frame's own time: on a machine that is doing other things too, the undisturbed
+		                                  // frames are still there to be read (Tools/bench_table.py)
 	};
 	struct FSoundMark
 	{
@@ -112,6 +131,15 @@ private:
 	int32 StillFrames = 0;                // frames left until the picture
 	bool bStillPathTraced = false;
 	int32 StillUpscale = 0;                 // the upscaler a path-traced still put aside
+	int32 StillSeries = 0;                  // frames of a held pose still to be saved
+	TArray<FShotTime> ShotTimes;
+	double ShotRealStart = 0.0;
+	int32 ShotFrameCount = 0;
+	double ShotGameMs = 0.0, ShotRenderMs = 0.0, ShotRhiMs = 0.0, ShotGpuMs = 0.0;
+	double ShotLastFrame = 0.0;
+	TArray<float> ShotFrameMs;
+	void CountFrame();
+	void WriteTiming() const;
 	void BeginStill(const FShot& S);
 	void EndStill();
 	void HoldScene(bool bHold);

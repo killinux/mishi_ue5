@@ -1,0 +1,15 @@
+[
+  {"name": "_warm", "phase": 1, "seconds": 2.0, "yaw": 58, "y": 0.5, "zoom": 1.0, "cmd": "r.FilmGrain 0"},
+  {"name": "_tsr", "upscale": "tsr", "rr": false, "phase": 1, "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0},
+  {"name": "body_tsr", "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0, "hold": 1.0, "series": 16},
+  {"name": "chest_tsr", "seconds": 0.5, "bone": "Bip001-Spine2", "from": [0.3, -1, 0.25], "distance": 86, "hold": 1.0, "series": 16},
+  {"name": "face_tsr", "seconds": 0.5, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.3], "distance": 56, "hold": 1.0, "series": 16},
+  {"name": "_dlaa", "upscale": "dlaa", "rr": false, "phase": 1, "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0},
+  {"name": "body_dlaa", "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0, "hold": 1.0, "series": 16},
+  {"name": "chest_dlaa", "seconds": 0.5, "bone": "Bip001-Spine2", "from": [0.3, -1, 0.25], "distance": 86, "hold": 1.0, "series": 16},
+  {"name": "face_dlaa", "seconds": 0.5, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.3], "distance": 56, "hold": 1.0, "series": 16},
+  {"name": "_dlaa_rr", "upscale": "dlaa", "rr": true, "phase": 1, "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0},
+  {"name": "body_dlaa_rr", "seconds": 1.0, "yaw": 58, "y": 0.5, "zoom": 1.0, "hold": 1.0, "series": 16},
+  {"name": "chest_dlaa_rr", "seconds": 0.5, "bone": "Bip001-Spine2", "from": [0.3, -1, 0.25], "distance": 86, "hold": 1.0, "series": 16},
+  {"name": "face_dlaa_rr", "seconds": 0.5, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.3], "distance": 56, "hold": 1.0, "series": 16}
+]
