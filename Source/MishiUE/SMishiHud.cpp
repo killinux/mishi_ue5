@@ -142,6 +142,16 @@ void SMishiHud::Construct(const FArguments& InArgs)
 			[this]() { if (AMishiCouple* C = Couple()) C->SkinVersion = (C->SkinVersion + 2) % 3; },
 			[this]() { const AMishiCouple* C = Couple(); return C && C->SkinVersion >= 2; }, 112.f)
 	];
+	Bar->AddSlot().Padding(3.f)
+	[
+		// "te xie: guan / lian / xiong" - a close-up (key F): the orbit rides on her face or her chest and the wheel goes in
+		// closer than the game's own orbit lets it
+		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCameraPawn* Cam = Owner.IsValid() ? Owner->GetCam() : nullptr;
+				const int32 Which = Cam ? Cam->GetCloseUp() : 0;
+				return Which == 1 ? MISHI_TEXT("\u7279\u5199\uFF1A\u8138") : Which == 2 ? MISHI_TEXT("\u7279\u5199\uFF1A\u80F8") : MISHI_TEXT("\u7279\u5199\uFF1A\u5173"); }),
+			[this]() { if (AMishiCameraPawn* Cam = Owner.IsValid() ? Owner->GetCam() : nullptr) Cam->SetCloseUp((Cam->GetCloseUp() + 1) % 3); },
+			[this]() { const AMishiCameraPawn* Cam = Owner.IsValid() ? Owner->GetCam() : nullptr; return Cam && Cam->GetCloseUp() > 0; }, 100.f)
+	];
 	// what only a showcase has: the game's own camera for the skills
 	const TAttribute<EVisibility> ShowcaseOnly = TAttribute<EVisibility>::CreateLambda([this]()
 	{

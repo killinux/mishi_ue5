@@ -145,6 +145,11 @@ public:
 	void Cut() { bCut = true; }
 	/** The game's limits on zoom and pan (off for the look-dev shots, which go closer than the game lets the player). */
 	bool bLimits = true;
+	/** A close-up (key F, the panel's button): the orbit rides on one of her bones - 1 the face, 2 the chest - and the wheel
+	 *  may go in to a hand's breadth, which the game's own orbit does not let the player (user 11-22: "镜头还能进一步拉近么，
+	 *  想看看脸上的细节"); 0 the game's orbit again.  Dragging turns round the bone, the right button shifts the aim a little. */
+	void SetCloseUp(int32 Which);
+	int32 GetCloseUp() const { return CloseUp; }
 	/** Distance from the camera to what it orbits, cm - the focus distance for the depth of field. */
 	float FocusDistance() const { return LastDistance; }
 
@@ -168,6 +173,9 @@ private:
 	FVector PoseOverridePos = FVector::ZeroVector, PoseOverrideTarget = FVector::ZeroVector, PoseOverrideUp = FVector::UpVector;
 	bool bTargetOverride = false;
 	FVector TargetOverrideWorld = FVector::ZeroVector;
+	int32 CloseUp = 0;
+	float ZoomBefore = 1.f;                    // the orbit's zoom when a close-up began: it comes back with the orbit
+	FVector ClosePanU = FVector::ZeroVector;   // the close-up's own shift of its aim (Unity, anchor space)
 	float FovOverride = 0.f;
 	float LastDistance = 300.f;
 	float Focus = 300.f;

@@ -121,10 +121,32 @@ void AMishiCameraPawn::CutView()
 
 void AMishiCameraPawn::ResetView()
 {
+	CloseUp = 0;
+	ClosePanU = FVector::ZeroVector;
 	Yaw = Rig.XAxis;
 	Y = Rig.YAxis;
 	Zoom = Rig.Zoom;
 	PanU = FVector::ZeroVector;
+}
+
+void AMishiCameraPawn::SetCloseUp(int32 Which)
+{
+	Which = FMath::Clamp(Which, 0, 2);
+	if (Which == CloseUp)
+		return;
+	if (CloseUp == 0)
+		ZoomBefore = Zoom;
+	CloseUp = Which;
+	ClosePanU = FVector::ZeroVector;
+	if (CloseUp == 0)
+		Zoom = ZoomBefore;
+	else
+	{
+		// it begins at arm's length from the face, a little more from the chest (Orbit: metres at zoom 1)
+		const float Base = FMath::Max(float(Orbit(Y).Size()), 0.01f);
+		Zoom = (CloseUp == 1 ? 0.4f : 0.65f) / Base;
+	}
+	bCut = true;
 }
 
 void AMishiCameraPawn::SetView(float InYaw, float InY, float InZoom)
@@ -142,6 +164,14 @@ void AMishiCameraPawn::Turn(float DxPixels, float DyPixels)
 
 void AMishiCameraPawn::Pan(float DxPixels, float DyPixels)
 {
+	if (CloseUp > 0)
+	{
+		// (a pixel shifts the aim by as much as it shows: less, the nearer the lens)
+		const float K = PanPerPixel * FMath::Clamp(Zoom / FMath::Max(Rig.Zoom, 0.01f), 0.02f, 1.f);
+		ClosePanU -= RightU * (DxPixels * K) - UpU * (DyPixels * K);
+		ClosePanU = ClosePanU.GetClampedToMaxSize(0.25);
+		return;
+	}
 	PanU -= RightU * (DxPixels * PanPerPixel) - UpU * (DyPixels * PanPerPixel);
 }
 
@@ -395,7 +425,9 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 	Y = FMath::Clamp(Y, 0.f, 1.f);
 	if (bLimits)
 	{
-		Zoom = FMath::Clamp(Zoom, Rig.ZoomMin, ZoomMax());
+		// (a close-up may go in to 10 cm from the bone it rides on)
+		Zoom = CloseUp > 0 ? FMath::Clamp(Zoom, 0.10f / FMath::Max(float(Orbit(Y).Size()), 0.01f), ZoomMax())
+			: FMath::Clamp(Zoom, Rig.ZoomMin, ZoomMax());
 		// the pan stays inside the box the game allows (anchor space)
 		const FVector Box = Rig.BoxCenter - Rig.Target;
 		PanU.X = FMath::Clamp(PanU.X, Box.X - Rig.BoxExtent.X, Box.X + Rig.BoxExtent.X);
@@ -413,6 +445,18 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 		const FVector L = C->Home().InverseTransformPosition(TargetOverrideWorld);      // (Home: UnityToWorld's own frame)
 		TargetU = FVector(-L.X, L.Z, L.Y) / 100.0;
 	}
+	// a close-up: the target rides on her head (a hand's breadth before and above the bone at the skull's base: the face)
+	// or her chest, the orbit goes with it
+	const USkeletalMeshComponent* Ridden = C->GetHer();
+	const FName CloseBone = CloseUp == 1 ? FName(TEXT("Bip001-Head")) : FName(TEXT("Bip001-Spine2"));
+	const bool bClose = CloseUp > 0 && !bTargetOverride && !bPoseOverride && Ridden && Ridden->GetBoneIndex(CloseBone) != INDEX_NONE;
+	if (bClose)
+	{
+		const FVector Local = CloseUp == 1 ? FVector(6.0, -6.0, 0.0) : FVector(0.0, -6.0, 0.0);
+		const FVector World = Ridden->GetBoneLocation(CloseBone) + Ridden->GetBoneQuaternion(CloseBone).RotateVector(Local);
+		const FVector L = C->Home().InverseTransformPosition(World);
+		TargetU = FVector(-L.X, L.Z, L.Y) / 100.0 + (Anchor.TransformPoint(ClosePanU) - Anchor.TransformPoint(FVector::ZeroVector));
+	}
 	const FVector OffsetU = Rot.RotateVector(FVector(0, O.X, -O.Y)) * Zoom;
 	const FVector PosU = TargetU + OffsetU;
 	FVector Pos = C->UnityToWorld(PosU);
@@ -420,7 +464,7 @@ void AMishiCameraPawn::UpdatePose(float DeltaSeconds)
 	FVector Up = C->UnityDirToWorld(Anchor.Rot.RotateVector(FVector(0, 1, 0)));
 	// a showcase: the orbit goes with her hips - a skill carries her metres across the stage - but not with her swaying on the spot
 	const USkeletalMeshComponent* Her = C->GetHer();
-	if (bFollow && !bTargetOverride && !bPoseOverride && Her && Her->GetBoneIndex(FollowBone) != INDEX_NONE)
+	if (bFollow && !bClose && !bTargetOverride && !bPoseOverride && Her && Her->GetBoneIndex(FollowBone) != INDEX_NONE)
 	{
 		FVector Want = Her->GetBoneLocation(FollowBone) - C->Home().GetLocation() - FVector(0.0, 0.0, FollowHeight);
 		Want.Z *= 0.5;                                  // a leap lifts the view half as far

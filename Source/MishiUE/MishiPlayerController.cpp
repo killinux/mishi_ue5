@@ -135,6 +135,8 @@ void AMishiPlayerController::BeginPlay()
 	Super::BeginPlay();
 	if (!IsLocalController())
 		return;
+	// (a close-up stands a hand's breadth from her face: the engine's near plane is 10 cm away and would cut into it)
+	ConsoleCommand(TEXT("r.SetNearClipPlane 2"));
 	FInputModeGameAndUI Mode;
 	Mode.SetHideCursorDuringCapture(false);
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -218,6 +220,7 @@ void AMishiPlayerController::StartShots(const FString& File)
 		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
 		if (O->TryGetNumberField(TEXT("aura"), N)) S.Aura = int32(N);
 		if (O->TryGetNumberField(TEXT("skin"), N)) S.Skin = int32(N);
+		if (O->TryGetNumberField(TEXT("closeup"), N)) S.CloseUp = int32(N);
 		if (O->TryGetNumberField(TEXT("wet"), N)) S.Wet = float(N);
 		if (O->TryGetNumberField(TEXT("flush"), N)) S.Flush = float(N);
 		O->TryGetStringField(TEXT("upscale"), S.Upscale);
@@ -388,6 +391,8 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->AuraMode = FMath::Clamp(S.Aura, 0, 2);
 		if (S.Skin >= 0)
 			C->SkinVersion = FMath::Clamp(S.Skin, 0, 2);
+		if (S.CloseUp >= 0)
+			Cam->SetCloseUp(S.CloseUp);
 		if (S.Wet > -1.5f)
 			C->WetHeld = S.Wet;
 		if (S.Flush > -1.5f)
@@ -670,6 +675,7 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 		if (WasInputKeyJustPressed(EKeys::MouseScrollUp)) Cam->ZoomBy(1.f);
 		if (WasInputKeyJustPressed(EKeys::MouseScrollDown)) Cam->ZoomBy(-1.f);
 		if (WasInputKeyJustPressed(EKeys::MiddleMouseButton) || WasInputKeyJustPressed(EKeys::Home)) Cam->ResetView();
+		if (WasInputKeyJustPressed(EKeys::F)) Cam->SetCloseUp((Cam->GetCloseUp() + 1) % 3);     // the face, the chest, the orbit
 		Cam->Keys(DeltaTime,
 			Axis(EKeys::Left, EKeys::A, EKeys::Right, EKeys::D),
 			Axis(EKeys::Down, EKeys::S, EKeys::Up, EKeys::W),
