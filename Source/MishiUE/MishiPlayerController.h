@@ -92,6 +92,7 @@ private:
 		bool bHideHer = false;                // "hide_her": him alone (looking at his hands, his wrists)
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
+		int32 Aura = -1;              // "aura": the buff's aura from this shot on - 0 off, 1 in battle, 2 on every part (-1: as it is)
 		FString Upscale;              // "upscale": the picture's upscaler from this shot on (tsr, dlaa, quality, balanced, performance)
 		int32 RayReconstruction = -1; // "rr": DLSS ray reconstruction on or off from this shot on (-1: as it is)
 		int32 Series = 0;             // "series": with "hold", this many frames of the held pose are saved (<name>_00.png ...) - what

@@ -39,7 +39,7 @@ import unreal
 import mishi_materials as mm
 from mishi_materials import F1, F2, F3, Graph, S, asset_tools, eal, mel, setp
 
-VERSION = 4
+VERSION = 5
 # how the effects sit in this scene's exposure: x the whole colour, x the HDR emission colours on top of that
 FX_LOOK = {
     "brightness": 1.0,
@@ -47,6 +47,11 @@ FX_LOOK = {
     # is white: at 1 a spark was a white shard with no colour left.  At 0.3 the cores are still white-hot and the falling
     # edges keep the colour.
     "emission": 0.3,
+    # A buff's aura (an action that loops) is another matter.  Its flames have next to no alpha - 0..9 of 255 - and take their
+    # light from an HDR colour (x 36): what reaches the picture is about 1, and under the 0.3 above a third of what Unity
+    # shows - nothing to see.  So an aura's material is dimmed only as far as its strongest light (its emission colour x the
+    # most opaque its particles ever are, which the bake notes) lies above this.
+    "aura_knee": 1.5,
 }
 FLIP = "float2((%s).x, 1.0 - (%s).y)"
 # the emission colour out of UV3 (see MishiFx.cpp)
@@ -356,7 +361,8 @@ def texture_roles(materials):
     return roles
 
 
-def make_instance(name, d, lookup, masters, folder, info=None):
+def make_instance(name, d, lookup, masters, folder, info=None, aura_alpha=None):
+    """aura_alpha: for a material only a looping action (a buff's aura) uses, the most opaque its particles ever are."""
     kind = kind_of(d)
     blend = blend_of(d)
     master = masters[{"distort": "M_Mishi_FxDistort", "mutate": "M_Mishi_FxMutate", "default": "M_Mishi_FxDefault"}.get(kind)
@@ -395,7 +401,12 @@ def make_instance(name, d, lookup, masters, folder, info=None):
     if kind != "distort":
         base_file = textures.get("_BaseMap") or textures.get("_MainTex")
         scalar("BaseSRGB", 1.0 if ((info or {}).get(base_file) or {}).get("srgb") else 0.0)
-        vector("Brightness", (FX_LOOK["brightness"], FX_LOOK["emission"], 0, 0))
+        emission = FX_LOOK["emission"]
+        if aura_alpha is not None:
+            strongest = max(c.get("_Emissive", [0, 0, 0, 1])[:3]) * aura_alpha
+            if strongest > 0:
+                emission = min(1.0, max(emission, FX_LOOK["aura_knee"] / strongest))
+        vector("Brightness", (FX_LOOK["brightness"], emission, 0, 0))
     if kind == "master":
         scalar("SoftDistance", max(f.get("_SoftParticlesFarFadeDistance", 1.0), 0.05) * 100.0 if soft else 0.01)
         tex("BaseMap", "_BaseMap")
@@ -480,12 +491,24 @@ def step(src_dir, slice_folder, defaults, import_textures, warn, force=False):
             setp(tex, "address_y", want_y)
             eal.save_loaded_asset(tex)
     masters = build_masters(defaults, force)
+    # the materials only a looping action draws with (a buff's aura), with the most opaque their particles ever are
+    aura, once = {}, set()
+    if os.path.isfile(os.path.join(fx, "fx.json")):
+        with open(os.path.join(fx, "fx.json"), encoding="utf-8") as f:
+            for a in json.load(f).get("actions", []):
+                for b in a.get("batches", []):
+                    if a.get("loop") and b.get("frames", 0) > 0:
+                        aura[b["material"]] = max(aura.get(b["material"], 0.0), b.get("max_alpha", 1.0))
+                    elif not a.get("loop"):
+                        once.add(b["material"])
+    aura = {m: v for m, v in aura.items() if m not in once}
     out, kinds = [], {}
     for name, d in sorted(materials.items()):
-        mi, kind = make_instance(name, d, lookup, masters, folder, info)
+        mi, kind = make_instance(name, d, lookup, masters, folder, info, aura.get(name))
         out.append(mi)
         kinds[kind] = kinds.get(kind, 0) + 1
-    log("effects: %d textures (%d imported), %d material instances %s" % (len(lookup), imported, len(out), kinds))
+    log("effects: %d textures (%d imported), %d material instances %s%s" % (len(lookup), imported, len(out), kinds,
+        ("; an aura's: " + ", ".join("%s (particles up to %.3f opaque)" % (m, v) for m, v in sorted(aura.items()))) if aura else ""))
     return out
 
 

@@ -38,13 +38,15 @@ struct FMishiFxAction
 	TArray<uint8> Data;
 	TArray<int64> Offsets;
 	bool bLoaded = false;
+	bool bLoop = false;                   // a buff's aura: played round and round - its bake is one period that joins its own start
 };
 
 class FMishiFx
 {
 public:
-	/** Reads <Folder>/fx_index.json and the actions' files. */
-	bool Load(const FString& Folder);
+	/** Reads <Folder>/fx_index.json and the actions' files: those that play once (a skill's effects), or with bLoops those
+	    that go round (a buff's aura).  One player draws one action at a time, and an aura burns on beside a skill. */
+	bool Load(const FString& Folder, bool bLoops = false);
 	bool Has(const FString& Action) const;
 	int32 NumActions() const { return Actions.Num(); }
 	void Play(const FString& Action, float AtSeconds, UProceduralMeshComponent* Mesh, const TArray<TObjectPtr<UMaterialInterface>>& Materials);
@@ -62,6 +64,8 @@ public:
 
 	/** Candela of a particle light of intensity 1 (Unity's point light). */
 	float LightScale = 3.f;
+	/** 0..1 over everything drawn: an aura coming up and going out. */
+	float Fade = 1.f;
 
 private:
 	TArray<FMishiFxAction> Actions;

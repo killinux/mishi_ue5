@@ -196,6 +196,23 @@ bool FMishiSlice::Parse(const FString& Json, FString& OutError)
 		}
 	Target = Vec(Root, TEXT("target"), FVector(0.0, 0.0, 6.0));
 	Effects = Str(Root, TEXT("effects"));
+	AuraAction.Reset();
+	AuraParts.Reset();
+	AuraNever.Reset();
+	AuraFollow = NAME_None;
+	if (const FObj Au = Obj(Root, TEXT("aura")))
+	{
+		AuraAction = Str(Au, TEXT("action"));
+		if (const FArr* A = Arr(Au, TEXT("parts")))
+			for (const TSharedPtr<FJsonValue>& V : *A)
+				AuraParts.Add(V.IsValid() ? V->AsString() : FString());
+		if (const FArr* A = Arr(Au, TEXT("never")))
+			for (const TSharedPtr<FJsonValue>& V : *A)
+				AuraNever.Add(V.IsValid() ? V->AsString() : FString());
+		const FString Follow = Str(Au, TEXT("follow"));
+		if (!Follow.IsEmpty())
+			AuraFollow = FName(*Follow.Replace(TEXT(" "), TEXT("-")));
+	}
 	// the bone cloth: the sets of bones by kind with their numbers, the body's capsules, the wind
 	Springs = FMishiSpringSetup();
 	if (const FObj Sp = Obj(Root, TEXT("springs")))

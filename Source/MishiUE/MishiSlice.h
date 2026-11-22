@@ -106,6 +106,12 @@ struct FMishiSlice
 	FVector Target = FVector(0.0, 0.0, 6.0);   // a showcase: where the one she fights stands, in the anchor's space (Unity)
 	FMishiSpringSetup Springs;            // her bone cloth: hair, chains, skirt ("springs"; empty: none)
 	FString Effects;                      // the folder of the skills' baked effects, relative to the project ("effects"; empty: none)
+	// A buff's looping effect beside the parts (the "ur" flames of an ultra-rare suit; "aura"): the baked action, the parts it
+	// burns on as the game has it - battle: the stance, the skills, a hit -, the parts it never burns on (she is down), and
+	// the bone it stays under.
+	FString AuraAction;
+	TArray<FString> AuraParts, AuraNever;
+	FName AuraFollow;
 	FString Posture, Title, Outfit, Scene, Room;
 	FString FemaleRoot, MaleRoot;
 	FMishiUnityXform Anchor;              // the couple's origin in the room

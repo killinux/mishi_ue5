@@ -170,6 +170,19 @@ void SMishiHud::Construct(const FArguments& InArgs)
 				[this]() { const AMishiCouple* C = Couple(); return C && C->bFx; }, 64.f)
 		]
 	];
+	Bar->AddSlot().Padding(3.f)
+	[
+		SNew(SBox).Visibility(TAttribute<EVisibility>::CreateLambda([this]()
+			{ const AMishiCouple* C = Couple(); return C && C->IsReady() && C->HasAura() ? EVisibility::Visible : EVisibility::Collapsed; }))
+		[
+			// "guang huan: zhan dou / chang kai / guan" - the buff's aura: in battle (the stance, the skills, a hit) as the game
+			// has it, on every part, off
+			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+					return !C || C->AuraMode == 0 ? MISHI_TEXT("光环：关") : C->AuraMode == 1 ? MISHI_TEXT("光环：战斗") : MISHI_TEXT("光环：常开"); }),
+				[this]() { if (AMishiCouple* C = Couple()) C->AuraMode = (C->AuraMode + 1) % 3; },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->AuraMode > 0; }, 112.f)
+		]
+	];
 	// "hua zhi" - the picture's upscaler: the engine's TSR, or NVIDIA's DLSS where its plugin is installed and the card can
 	// (DLAA = its anti-aliasing on the full picture; quality / balanced / performance render 67 / 58 / 50 % of the width);
 	// "guang xian chong jian" - DLSS ray reconstruction, one denoiser for Lumen's reflections and shadows

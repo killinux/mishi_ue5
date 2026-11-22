@@ -88,7 +88,7 @@ namespace
 	}
 }
 
-bool FMishiFx::Load(const FString& Folder)
+bool FMishiFx::Load(const FString& Folder, bool bLoops)
 {
 	Actions.Reset();
 	Current = INDEX_NONE;
@@ -108,7 +108,12 @@ bool FMishiFx::Load(const FString& Folder)
 		const TSharedPtr<FJsonObject> O = Item.IsValid() ? Item->AsObject() : nullptr;
 		if (!O.IsValid())
 			continue;
+		bool bLoop = false;
+		O->TryGetBoolField(TEXT("loop"), bLoop);
+		if (bLoop != bLoops)
+			continue;
 		FMishiFxAction& A = Actions.AddDefaulted_GetRef();
+		A.bLoop = bLoop;
 		A.Name = O->GetStringField(TEXT("name"));
 		A.Part = O->GetStringField(TEXT("part"));
 		A.File = O->GetStringField(TEXT("file"));
@@ -138,7 +143,7 @@ bool FMishiFx::Load(const FString& Folder)
 		if (LoadAction(A, Folder))
 			Bytes += A.Data.Num();
 	}
-	UE_LOG(LogMishi, Log, TEXT("effects: %d actions from %s, %.1f MB"), Actions.Num(), *Folder, Bytes / 1048576.0);
+	UE_LOG(LogMishi, Log, TEXT("effects: %d %s from %s, %.1f MB"), Actions.Num(), bLoops ? TEXT("looping actions") : TEXT("actions"), *Folder, Bytes / 1048576.0);
 	return Actions.Num() > 0;
 }
 
@@ -282,6 +287,8 @@ void FMishiFx::Step(float Dt, UProceduralMeshComponent* Mesh, const TArray<UPoin
 		return;
 	Clock += Dt;
 	const FMishiFxAction& A = Actions[Current];
+	if (A.bLoop && A.Frames > 0 && A.Fps > 0)
+		Clock = FMath::Fmod(Clock, float(A.Frames) / float(A.Fps));       // (its last frame is followed by its first)
 	const int32 Frame = FMath::FloorToInt(Clock * A.Fps);
 	if (Frame >= A.Frames)
 	{
@@ -307,6 +314,9 @@ void FMishiFx::Draw(int32 Frame, UProceduralMeshComponent* Mesh, const TArray<UP
 	auto Turn = [&Home](const float* P) { return Home.TransformVectorNoScale(FVector(-P[0], P[2], P[1])); };
 	TArray<bool, TInlineAllocator<128>> Now;
 	Now.Init(false, Shown.Num());
+	// (a fade goes into the colour and the alpha alike, half each: one shader takes its light from the one, another from the
+	// other, and an aura's alpha has only a few steps to lose - 0..9 of 255)
+	const float Gain = FMath::Sqrt(FMath::Clamp(Fade, 0.f, 1.f));
 
 	for (int32 K = 0; K < Records; ++K)
 	{
@@ -380,7 +390,8 @@ void FMishiFx::Draw(int32 Frame, UProceduralMeshComponent* Mesh, const TArray<UP
 			UV3[I] = FVector2D(Bright, Hue);
 			Tan[I] = FProcMeshTangent(Right, false);
 			const uint8* Cb = R.Colours + I * 4;
-			Col[I] = FColor(Cb[0], Cb[1], Cb[2], Cb[3]);
+			Col[I] = Gain >= 1.f ? FColor(Cb[0], Cb[1], Cb[2], Cb[3])
+				: FColor(uint8(Cb[0] * Gain), uint8(Cb[1] * Gain), uint8(Cb[2] * Gain), uint8(FMath::RoundToInt(Cb[3] * Gain)));
 		}
 		// the vertices this frame has no particle for: on the last one, so their triangles have no area
 		for (int32 I = NV; I < Max; ++I)

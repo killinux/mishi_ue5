@@ -111,6 +111,15 @@ public:
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TObjectPtr<UProceduralMeshComponent> FxMesh;
 
+	/** The buff's aura has a mesh of its own: it burns on beside the skills' effects. */
+	UPROPERTY(VisibleAnywhere, Category = "Mishi")
+	TObjectPtr<UProceduralMeshComponent> AuraMesh;
+
+	/** The buff's aura (the "ur" flames and sparks of an ultra-rare suit): 0 off, 1 in battle as the game has it - on the stance,
+	 *  the skills, a hit -, 2 on every part but those she is down in. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	int32 AuraMode = 1;
+
 	/** The lights the effects' particles carry (a blow lights the armour). */
 	UPROPERTY(VisibleAnywhere, Category = "Mishi")
 	TArray<TObjectPtr<UPointLightComponent>> FxLights;
@@ -163,6 +172,7 @@ public:
 	const FMishiSlice& Slice() const { return Data; }
 	bool IsReady() const { return bReady; }
 	bool HasFx() const { return Fx.NumActions() > 0; }
+	bool HasAura() const { return Aura.NumActions() > 0 && !Data.AuraAction.IsEmpty(); }
 	/** The effects out of the picture and back again, lights and all (a path-traced still: their meshes are not in the ray
 	    tracing scene, and a glow on the floor from nothing is worse than none). */
 	void SetFxHidden(bool bOut);
@@ -210,6 +220,12 @@ private:
 	int32 CueIndex = 0;                   // the part's next cue
 	int32 AutoIndex = -1;                 // where the auto mode is in the slice's round
 	FMishiFx Fx;                          // the skills' baked effects
+	FMishiFx Aura;                        // the buff's looping one
+	float AuraFade = 0.f;                 // 0..1: it comes up and goes out in 0.4 s
+	FVector AuraAt = FVector::ZeroVector; // where it burns: under her hips, followed softly
+	bool bAuraPlaced = false;
+	void StepAura(float DeltaSeconds);
+	void CameraNow(FVector& OutPos, FRotator& OutRot) const;
 	TArray<bool> FxLightsHidden;          // the lights SetFxHidden put out (lit again when the effects come back)
 	FTransform HomeXform;
 	bool bHome = false;

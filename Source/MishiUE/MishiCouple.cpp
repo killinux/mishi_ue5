@@ -63,6 +63,16 @@ AMishiCouple::AMishiCouple()
 	FxMesh->bUseAsyncCooking = false;
 	FxMesh->bAffectDynamicIndirectLighting = false;
 	FxMesh->SetVisibleInRayTracing(false);
+	AuraMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("AuraMesh"));
+	AuraMesh->SetupAttachment(Origin);
+	AuraMesh->SetUsingAbsoluteLocation(true);
+	AuraMesh->SetUsingAbsoluteRotation(true);
+	AuraMesh->SetUsingAbsoluteScale(true);
+	AuraMesh->SetCastShadow(false);
+	AuraMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AuraMesh->bUseAsyncCooking = false;
+	AuraMesh->bAffectDynamicIndirectLighting = false;
+	AuraMesh->SetVisibleInRayTracing(false);
 	for (int32 I = 0; I < 3; ++I)
 	{
 		UPointLightComponent* L = CreateDefaultSubobject<UPointLightComponent>(FName(*FString::Printf(TEXT("FxLight%d"), I)));
@@ -170,9 +180,12 @@ void AMishiCouple::BeginPlay()
 	}
 	if (!Data.Effects.IsEmpty())
 	{
+		const FString Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Data.Effects);
 		Fx.LightScale = FxLightScale;
-		Fx.Load(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Data.Effects));
+		Fx.Load(Folder);
 		Fx.Prewarm(FxMesh, FxMaterials, GetActorLocation() + FVector(0.0, 0.0, 100.0));
+		if (!Data.AuraAction.IsEmpty())
+			Aura.Load(Folder, true);
 	}
 	if (USoundBase* Bgm = FindSound(Data.MusicFile))
 	{
@@ -460,6 +473,7 @@ void AMishiCouple::Tick(float DeltaSeconds)
 	FireCues();
 	StepMove(Dt);
 	StepFx(DeltaSeconds);
+	StepAura(DeltaSeconds);
 	if (UMishiAnimInstance* A = Player(Her))
 		A->bSpringsOn = bSprings;
 	ApplyShapes();
@@ -534,6 +548,8 @@ void AMishiCouple::SetFxHidden(bool bOut)
 {
 	if (FxMesh)
 		FxMesh->SetVisibility(!bOut);
+	if (AuraMesh)
+		AuraMesh->SetVisibility(!bOut);
 	if (bOut)
 	{
 		FxLightsHidden.Init(false, FxLights.Num());
@@ -566,13 +582,59 @@ void AMishiCouple::StepFx(float DeltaSeconds)
 		Fx.Stop(FxMesh, LightList);
 		return;
 	}
+	FVector CamPos;
+	FRotator CamRot;
+	CameraNow(CamPos, CamRot);
+	Fx.Step(DeltaSeconds, FxMesh, LightList, Home(), CamPos, CamRot);
+}
+
+void AMishiCouple::CameraNow(FVector& OutPos, FRotator& OutRot) const
+{
 	// what faces the camera is turned to where it stood last frame (this actor ticks before it)
-	FVector CamPos = GetActorLocation() - GetActorForwardVector() * 300.0;
-	FRotator CamRot = GetActorRotation();
+	OutPos = GetActorLocation() - GetActorForwardVector() * 300.0;
+	OutRot = GetActorRotation();
 	if (const APlayerCameraManager* CM = UGameplayStatics::GetPlayerCameraManager(this, 0))
 	{
-		CamPos = CM->GetCameraLocation();
-		CamRot = CM->GetCameraRotation();
+		OutPos = CM->GetCameraLocation();
+		OutRot = CM->GetCameraRotation();
 	}
-	Fx.Step(DeltaSeconds, FxMesh, LightList, Home(), CamPos, CamRot);
+}
+
+void AMishiCouple::StepAura(float DeltaSeconds)
+{
+	if (!HasAura() || !AuraMesh)
+		return;
+	// where it burns: on the parts the slice names (1: battle, as the game has it), or on all but those she is down in (2)
+	const FMishiPart* P = PartNow();
+	const bool bWanted = P && AuraMode > 0 && (AuraMode == 1 ? Data.AuraParts.Contains(P->Name) : !Data.AuraNever.Contains(P->Name));
+	AuraFade = FMath::Clamp(AuraFade + (bWanted ? 1.f : -1.f) * DeltaSeconds / 0.4f, 0.f, 1.f);
+	const TArray<UPointLightComponent*> NoLights;
+	if (AuraFade <= 0.f)
+	{
+		if (Aura.IsPlaying())
+			Aura.Stop(AuraMesh, NoLights);
+		bAuraPlaced = false;
+		return;
+	}
+	if (!Aura.IsPlaying())
+		Aura.Play(Data.AuraAction, 0.f, AuraMesh, FxMaterials);
+	// The game hangs it on the unit's pivot.  Her clips carry her metres away from that - 2.3 m at the super's finish - and
+	// the flames would burn on where she no longer stands.  So it stays under her hips, on the ground the unit stands on;
+	// softly: the sway of her hips is not the fire's.
+	FVector Under = GetActorLocation();
+	if (Her && !Data.AuraFollow.IsNone() && Her->GetBoneIndex(Data.AuraFollow) != INDEX_NONE)
+	{
+		const FVector Hips = Her->GetBoneLocation(Data.AuraFollow);
+		Under.X = Hips.X;
+		Under.Y = Hips.Y;
+	}
+	AuraAt = bAuraPlaced ? FMath::Lerp(AuraAt, Under, 1.0 - FMath::Exp(-double(DeltaSeconds) / 0.1)) : Under;
+	bAuraPlaced = true;
+	FTransform At = GetActorTransform();
+	At.SetLocation(AuraAt);
+	FVector CamPos;
+	FRotator CamRot;
+	CameraNow(CamPos, CamRot);
+	Aura.Fade = AuraFade;
+	Aura.Step(DeltaSeconds, AuraMesh, NoLights, At, CamPos, CamRot);
 }

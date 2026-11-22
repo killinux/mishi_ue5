@@ -40,6 +40,12 @@ ACTIONS = [
 ]
 # the skill sheet's actions that drive each part
 SHEET_ACTION = {"skill_01": "skill1", "skill_02": "skill2", "skill_03": "skill3", "hurt": "hurt", "die": "die"}
+# The unit's looping buff timeline - the "ur" aura of an ultra-rare suit: flames and sparks round her, FX_H_demonize_ur on the
+# unit's pivot - is no part of hers: it burns beside them.  In battle, as the game has it: on the stance, the skills, a hit;
+# not on the showcase idle and its reactions (the gallery's poses), and never where she is down.
+AURA_PARTS = ("idle_01", "skill_01", "skill_02", "skill_03", "hurt")
+AURA_NEVER = ("die", "rip")
+AURA_FOLLOW = "Bip001 Pelvis"           # it stays under her hips (see AMishiCouple::StepAura)
 # the auto mode's round: the buttons by trigger
 AUTO = ["show", "react1", "show", "react2", "stance", "skill1", "stance", "skill2", "stance", "skill3", "stance", "hurt", "stance"]
 
@@ -143,10 +149,12 @@ def effects(d):
                             "order": [m.get("queue", b.get("queue", 3000)), b.get("sorting_order", 0), b["id"]]})
         batches.sort(key=lambda b: b["order"])
         actions.append({"name": a["name"], "part": a["part"], "file": a["file"], "frames": a["frames"], "fps": index["fps"],
-                        "duration": a["duration"], "max_lights": a.get("max_lights", 0), "batches": batches})
+                        "duration": a["duration"], "loop": bool(a.get("loop")), "max_lights": a.get("max_lights", 0), "batches": batches})
     with open(os.path.join(fx, "fx_index.json"), "w", encoding="utf-8") as f:
         json.dump({"fps": index["fps"], "target": index.get("target"), "actions": actions}, f, indent=1)
-    return {"actions": {a["part"]: a["name"] for a in actions}, "target": index.get("target")}
+    # (a looping action is a buff's aura, baked as one period that joins its own start: it has no part)
+    return {"actions": {a["part"]: a["name"] for a in actions if not a["loop"]}, "loops": [a["name"] for a in actions if a["loop"]],
+            "target": index.get("target")}
 
 
 # The game's timeline of the super has no camera of its own (the battle's far side view stays).  Its finish is made to be seen
@@ -317,6 +325,8 @@ def main():
         "target": target,
         "springs": springs(d),
         "effects": ("Import/%s/fx" % os.path.basename(os.path.normpath(d))) if fx else None,
+        "aura": {"action": fx["loops"][0], "parts": [p for p in AURA_PARTS if p in seen], "never": [p for p in AURA_NEVER if p in seen],
+                 "follow": AURA_FOLLOW} if fx and fx["loops"] else None,
         "posture_anchor": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1]},
         # an orbit round her chest: level at 3.3 m, from above at 1.6 m out and 1.9 m up, from near the ground at 2.9 m; she faces
         # the anchor's +Z and the orbit starts behind her, so the view starts half a turn round, a little to her right
@@ -341,7 +351,7 @@ def main():
     if out["springs"]:
         print("bone cloth: " + ", ".join("%s %d bones" % (s["kind"], len(s["bones"])) for s in out["springs"]["sets"]))
     if fx:
-        print("effects: %s" % fx["actions"])
+        print("effects: %s%s" % (fx["actions"], ("; aura %s on %s" % (out["aura"]["action"], out["aura"]["parts"])) if out["aura"] else ""))
         if fx.get("target") is not None and abs(fx["target"] - target[2]) > 0.01:
             print("WARNING: the effects were baked for a target %.2f m ahead, the slice's stands %.2f m ahead (bake again with -mishiTarget)" % (
                 fx["target"], target[2]))
