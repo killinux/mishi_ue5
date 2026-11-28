@@ -10,6 +10,7 @@ The pack is its author's work and is bought from him: its files stay on this mac
     Shaders 4.15:        [Hanmen] NEXT-GEN Shaders 4.15 Beta.zipmod       nxtg-tex-body: cf_nextgen_body_base_n, SSA_Body, thickness_body_female
                                                                            nxtg-tex-wet: WetnessMap, WetnessFace
                                                                            nxtg-tex-head: thickness_head_female
+                                                                           nxtg-tex-male: cm_nextgen_body_base_n, SSA_male_body, thickness_body_male
 """
 import argparse
 import io
@@ -24,7 +25,9 @@ WANT = {
     "NEXT-GEN Textures NoMoles v1.2.zipmod": {"abdata/chara/nxtg_body_02.unity3d": ["cf_nextgen_body_02_t"]},
     "NEXT-GEN Shaders": {"abdata/chara/nxtg-tex-body.unity3d": ["cf_nextgen_body_base_n", "SSA_Body", "thickness_body_female"],
                          "abdata/chara/nxtg-tex-wet.unity3d": ["WetnessMap", "WetnessFace"],
-                         "abdata/chara/nxtg-tex-head.unity3d": ["thickness_head_female"]},
+                         "abdata/chara/nxtg-tex-head.unity3d": ["thickness_head_female"],
+                         # the man's (his body's UV layout is the woman's: the wet map serves both)
+                         "abdata/chara/nxtg-tex-male.unity3d": ["cm_nextgen_body_base_n", "SSA_male_body", "thickness_body_male"]},
 }
 
 

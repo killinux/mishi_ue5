@@ -1,5 +1,5 @@
-"""python Tools/skin_transfer/bake.py <corr.npz> <material> [--own ALBEDO.png [--uv-cm N] [--only-own]] [--pack DIR] [--out DIR]
-                                      [--wet-size N]
+"""python Tools/skin_transfer/bake.py <corr.npz> <material> [--set female|male] [--own ALBEDO.png [--uv-cm N] [--only-own]]
+                                      [--pack DIR] [--out DIR] [--wet-size N]
 
 A skin pack's maps, painted for another body, drawn into a target material's own UV layout: every pixel of the target knows
 which point of the pack's body lies there (correspond.py), so each map is read there.  System Python (numpy, Pillow).
@@ -19,6 +19,13 @@ What is taken, and how (the pack here: Hanmen's NEXT-GEN for HoneySelect 2 - PAC
   <material>_hm_wn.png   the rivulets and drops as a normal map (from the two masks as heights, in the target's layout).
 
 A pixel whose point on the pack's body is far off (an ear's inside, a nail: correspond.py's "far") stays neutral.
+
+--set male: the pack's maps for a man's body (PACKS below).  A relief of his own, veins and thinness; the colour of his skin
+is the RGB of his vein map (SSA_male_body: a picture of his skin, 4096 px, the veins in its alpha); no gloss map (neutral).
+His relief is cut finer than hers ("relief_cells"): his map carries his muscles down to a centimetre, and the target has
+muscles of its own - a second set of them beside its own would be a double image.  His body's and his head's UV layouts
+are the woman's (their occupancies agree to 0.99 and 0.996), so the two wet maps serve him too; for his head the pack has
+no skin of his own (no relief, no colour: neutral there) - it gets the sweat and the thinness of the shared layout.
 
 Round every island of the layout the maps are carried on outward for some 64 pixels (pad): what a texture's filter reads
 beside an island's border - and in the smaller pictures made from it for a distance - is then the island's own skin, not
@@ -62,6 +69,16 @@ PACK = {
     2: {"normal": ("cf_nextgen_head_00_00_n.png", "rg"), "diffuse": "cf_nextgen_head_00_00_t.png", "gloss": ("cf_nextgen_head_00_00_o.png", "R"),
         "wet": "WetnessFace.png", "veins": None, "thin": ("thickness_head_female.png", "R")},
 }
+# the man's body (part 1 alone: the pack has no skin for his head).  His relief is a plain normal map (x in R), hers DXT5nm;
+# "relief_cells": the squares whose means are the relief's smooth part, as a count across the map (hers 48 = 3 cm: wrinkles
+# stay, muscles go; his 256 = 6 mm: pores and creases stay, and the web of muscle edges his map is covered with goes).
+PACK_MALE = {
+    1: {"normal": ("cm_nextgen_body_base_n.png", "rg"), "relief_cells": 256, "diffuse": "SSA_male_body.png", "gloss": None,
+        "wet": "WetnessMap.png", "veins": ("SSA_male_body.png", "A"), "thin": ("thickness_body_male.png", "R")},
+    2: {"normal": None, "diffuse": None, "gloss": None,
+        "wet": "WetnessFace.png", "veins": None, "thin": ("thickness_head_female.png", "R")},
+}
+PACKS = {"female": PACK, "male": PACK_MALE}
 FAR = 0.012          # metres between the two skins beyond which a pixel is left neutral
 FINE = 64            # the smooth part of a map: its mean over squares of size / FINE... (a map of 8192 -> 128 px squares = 2.5 cm)
 
@@ -76,47 +93,60 @@ def low(v, cells):
 class Source:
     def __init__(self, folder, spec):
         t0 = time.time()
-        name, layout = spec["normal"]
-        im = Image.open(os.path.join(folder, name))
-        cx, cy = ("A", "G") if layout == "ag" else ("R", "G")
-        x = (np.asarray(im.getchannel(cx)).astype(np.float32) - 127.5) / 127.5
-        y = (np.asarray(im.getchannel(cy)).astype(np.float32) - 127.5) / 127.5
-        cells = max(x.shape[0] // 48, 8)                                     # (the relief's own scale: wrinkles stay, muscles go)
-        self.nx, self.ny = x - low(x, cells), y - low(y, cells)
-        del im, x, y
-        d = np.asarray(Image.open(os.path.join(folder, spec["diffuse"])).convert("RGB")).astype(np.float32)
-        cells = max(d.shape[0] // FINE, 8)
-        ratio = np.empty(d.shape, np.float32)
-        strong = np.zeros(d.shape[:2], np.float32)
-        for k in range(3):
-            smooth = np.maximum(low(d[..., k], cells), 1.0)
-            ratio[..., k] = d[..., k] / smooth
-            # where the pack's own picture changes fast in the middle scale - a lip's edge, a nostril, an areola - its colour
-            # is a feature of ITS body, not skin texture: none of it there
-            mid = np.maximum(low(d[..., k], cells * 4), 1.0)
-            strong = np.maximum(strong, np.abs(mid / smooth - 1.0))
-        keep = 1.0 - np.clip((strong - 0.02) / 0.03, 0.0, 1.0)
-        keep = np.clip(low(keep.astype(np.float32), cells * 2), 0.0, 1.0)
-        self.keep = np.clip(keep * 255.0, 0, 255).astype(np.uint8)
-        # (a factor within 12 % of 1: a pore, a mottle; a mole or a freckle - a skin's own mark, not its texture - is cut down to that)
-        self.spots = float((ratio.min(axis=2) < 0.8).mean())
-        self.colour = np.clip((1.0 + (np.clip(ratio, 0.88, 1.12) - 1.0) * keep[..., None]) * 127.5, 0, 255).astype(np.uint8)
-        del d, ratio, strong
-        name, ch = spec["gloss"]
-        g = np.asarray(Image.open(os.path.join(folder, name)).getchannel(ch)).astype(np.float32)
-        smooth = np.maximum(low(g, max(g.shape[0] // FINE, 8)), 1.0)
-        if keep.shape != g.shape:
-            keep = np.asarray(Image.fromarray(keep).resize((g.shape[1], g.shape[0]), Image.BILINEAR))
-        # (a nostril, an eye's rim are deep black in the gloss map: the same features, the same weight)
-        self.gloss = np.clip((1.0 + (np.clip(g / smooth, 0.7, 1.3) - 1.0) * keep) * 127.5, 0, 255).astype(np.uint8)
-        del g, smooth, keep
+        if spec.get("normal"):
+            name, layout = spec["normal"]
+            im = Image.open(os.path.join(folder, name))
+            cx, cy = ("A", "G") if layout == "ag" else ("R", "G")
+            x = (np.asarray(im.getchannel(cx)).astype(np.float32) - 127.5) / 127.5
+            y = (np.asarray(im.getchannel(cy)).astype(np.float32) - 127.5) / 127.5
+            cells = spec.get("relief_cells") or max(x.shape[0] // 48, 8)     # (the relief's own scale: wrinkles stay, muscles go)
+            self.nx, self.ny = x - low(x, cells), y - low(y, cells)
+            del im, x, y
+        else:
+            name = "none"                                                    # (no relief of this part in the pack: flat)
+            self.nx = self.ny = np.zeros((8, 8), np.float32)
+        if spec.get("diffuse"):
+            d = np.asarray(Image.open(os.path.join(folder, spec["diffuse"])).convert("RGB")).astype(np.float32)
+            cells = max(d.shape[0] // FINE, 8)
+            ratio = np.empty(d.shape, np.float32)
+            strong = np.zeros(d.shape[:2], np.float32)
+            for k in range(3):
+                smooth = np.maximum(low(d[..., k], cells), 1.0)
+                ratio[..., k] = d[..., k] / smooth
+                # where the pack's own picture changes fast in the middle scale - a lip's edge, a nostril, an areola - its colour
+                # is a feature of ITS body, not skin texture: none of it there
+                mid = np.maximum(low(d[..., k], cells * 4), 1.0)
+                strong = np.maximum(strong, np.abs(mid / smooth - 1.0))
+            keep = 1.0 - np.clip((strong - 0.02) / 0.03, 0.0, 1.0)
+            keep = np.clip(low(keep.astype(np.float32), cells * 2), 0.0, 1.0)
+            self.keep = np.clip(keep * 255.0, 0, 255).astype(np.uint8)
+            # (a factor within 12 % of 1: a pore, a mottle; a mole or a freckle - a skin's own mark, not its texture - is cut down to that)
+            self.spots = float((ratio.min(axis=2) < 0.8).mean())
+            self.colour = np.clip((1.0 + (np.clip(ratio, 0.88, 1.12) - 1.0) * keep[..., None]) * 127.5, 0, 255).astype(np.uint8)
+            del d, ratio, strong
+        else:
+            # (no colour map of this body in the pack: nothing of its colour, and nothing to tell its own features by)
+            keep = np.ones((8, 8), np.float32)
+            self.keep, self.spots, self.colour = np.full((8, 8), 255, np.uint8), 0.0, np.full((8, 8, 3), 128, np.uint8)
+        if spec.get("gloss"):
+            name, ch = spec["gloss"]
+            g = np.asarray(Image.open(os.path.join(folder, name)).getchannel(ch)).astype(np.float32)
+            smooth = np.maximum(low(g, max(g.shape[0] // FINE, 8)), 1.0)
+            if keep.shape != g.shape:
+                keep = np.asarray(Image.fromarray(keep).resize((g.shape[1], g.shape[0]), Image.BILINEAR))
+            # (a nostril, an eye's rim are deep black in the gloss map: the same features, the same weight)
+            self.gloss = np.clip((1.0 + (np.clip(g / smooth, 0.7, 1.3) - 1.0) * keep) * 127.5, 0, 255).astype(np.uint8)
+            del g, smooth
+        else:
+            self.gloss = np.full((8, 8), 128, np.uint8)
+        del keep
         w = Image.open(os.path.join(folder, spec["wet"]))
         self.run, self.drop = np.asarray(w.getchannel("R")), np.asarray(w.getchannel("B"))
         self.veins = np.asarray(Image.open(os.path.join(folder, spec["veins"][0])).getchannel(spec["veins"][1])) if spec.get("veins") else None
         self.thin = np.asarray(Image.open(os.path.join(folder, spec["thin"][0])).getchannel(spec["thin"][1])) if spec.get("thin") else None
         print("  source %s: relief %d px (rms %.3f / %.3f), colour %s %d px (%.3f %% of it darker than 0.8 of its surroundings: marks), wet %d px; %.0f s" % (
-            spec["normal"][0], self.nx.shape[0], float(self.nx.std()), float(self.ny.std()), spec["diffuse"], self.colour.shape[0], 100.0 * self.spots,
-            self.run.shape[0], time.time() - t0))
+            name, self.nx.shape[0], float(self.nx.std()), float(self.ny.std()), spec.get("diffuse") or "none", self.colour.shape[0],
+            100.0 * self.spots, self.run.shape[0], time.time() - t0))
 
 
 def sample(img, u, v):
@@ -263,6 +293,7 @@ def main():
     ap.add_argument("--wet-size", type=int, default=4096)
     ap.add_argument("--own", help="the target material's own colour map: its painted features keep their own skin")
     ap.add_argument("--only-own", action="store_true", help="write <material>_hm_m.png alone")
+    ap.add_argument("--set", default="female", choices=sorted(PACKS), help="which of the pack's bodies the correspondence is with")
     ap.add_argument("--uv-cm", type=float, default=150.0, help="what a unit of the material's UV covers on the body, cm (for --own)")
     a = ap.parse_args()
     t0 = time.time()
@@ -284,7 +315,7 @@ def main():
         if marks is None:
             raise SystemExit("--only-own needs --own <the target's colour map>")
         return
-    sources = {k: Source(a.pack, spec) for k, spec in PACK.items() if (part == k).any()}
+    sources = {k: Source(a.pack, spec) for k, spec in PACKS[a.set].items() if (part == k).any()}
 
     normal = np.zeros((n, n, 3), np.uint8)
     normal[...] = (128, 128, 255)

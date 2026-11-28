@@ -509,6 +509,12 @@ def slot_names(mesh):
 
 # ---------------------------------------------------------------------------------------------------------------- materials
 MALE_BODY_SLOT = "MaleBody"          # the Unity project's stand-in for the game's pc_a00_UnlitSilhouette
+# his two eyeballs, taken out of the body's slot by the Unity export (MishiUeExport.SplitEyeballs): the game has no eyes for
+# him - it draws him flat - and with his skin on them an eyeball showed his whole body atlas, small.  They are the women's
+# eyeball meshes, so the eye of the woman of the slice fits; its iris is the game's one brown (family g's).
+MALE_EYES_SLOT = "MaleEyes"
+MALE_IRIS = "pc_g_nk_eye_iris_rgbx_Albedo"
+MALE_LIMBUS = (0.20, 0.13, 0.10, 1.0)          # the ring round his iris (hers is the blue-grey that goes with a grey-blue iris)
 
 
 def step_materials(slice_data, room_materials, her, him):
@@ -547,6 +553,16 @@ def step_materials(slice_data, room_materials, her, him):
     for extra in ("pc_a00_UnlitSilhouette", "pc_a00_nk_body"):
         if extra in game and MALE_BODY_SLOT in used:
             defs[extra] = game[extra]
+    if MALE_EYES_SLOT in used:
+        hers = next((game[s] for s in sorted(used) if s in game and mishi_materials.classify(s, game[s]) == "eye"), None)
+        if hers is None:
+            warn("%s: no eye material of hers in the game's data to make his from" % MALE_EYES_SLOT)
+        else:
+            eye = json.loads(json.dumps(hers))
+            if os.path.isfile(cache_texture_file(MALE_IRIS, "_IrisAlbedoTex")):
+                eye["textures"]["_IrisAlbedoTex"] = MALE_IRIS
+                eye.setdefault("colors", {})["_LimbusColor"] = list(MALE_LIMBUS)
+            defs[MALE_EYES_SLOT] = eye
 
     room_tex, game_tex = {}, {}
     for name, d in defs.items():
@@ -640,7 +656,12 @@ def assign_skeletal(mesh, instances, male_style="skin"):
     missing = []
     for m in mesh.get_editor_property("materials"):          # (each element comes out as a copy: collect the changed copies)
         slot = str(m.get_editor_property("material_slot_name"))
-        mi = male_style_material(instances, male_style) if slot == MALE_BODY_SLOT else instances.get(slot)
+        if slot == MALE_BODY_SLOT:
+            mi = male_style_material(instances, male_style)
+        elif slot == MALE_EYES_SLOT:
+            mi = instances.get("pc_a00_UnlitSilhouette") if male_style == "silhouette" else instances.get(slot)
+        else:
+            mi = instances.get(slot)
         if mi is None:
             missing.append(slot)
         else:

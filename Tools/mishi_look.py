@@ -602,7 +602,7 @@ def place_couple(eas, slice_name, slice_text, slice_data, her, her_anims, him, h
     # (Unreal's Python names a bool without its b: "skin_state" is bSkinState.  The collection was once SkinState - the same
     # Python name - and its assignment here failed without a word: say it when a property is not taken)
     for prop, value in (("skin_collection", masters.get("MPC")), ("his_body_skin", instances.get("pc_a00_nk_body")),
-                        ("his_body_silhouette", instances.get("pc_a00_UnlitSilhouette"))):
+                        ("his_body_silhouette", instances.get("pc_a00_UnlitSilhouette")), ("his_eyes", instances.get("MaleEyes"))):
         if value is not None:
             setp(a, prop, value, warn)
     return a

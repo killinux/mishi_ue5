@@ -84,6 +84,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	TObjectPtr<UMaterialInterface> HisBodySilhouette;
 
+	/** His eyeballs' slot ("MaleEyes": the Unity export takes them out of the body's slot - with his skin on them an eyeball
+	 *  showed his whole body atlas, small): an eye, or the silhouette when the rest of him is one. */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	TObjectPtr<UMaterialInterface> HisEyes;
+
 	/** MPC_Mishi: Wet (sweat) and Flush (blush), which the skin materials read; they follow the phase.
 	 *  (Not "SkinState": Unreal's Python drops a bool's b, so bSkinState and SkinState were both skin_state there - the
 	 *  importer's assignment went to the bool, failed, and the collection was never set: no sweat, no blush, for weeks.) */

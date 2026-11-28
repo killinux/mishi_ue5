@@ -138,7 +138,7 @@ Unity 点 `(x, y, z)` 米 → UE `(-x, z, y) × 100` 厘米；四元数 `(x, y, 
 | 母材质 | 要点 |
 |---|---|
 | `M_Mishi_Skin` | Subsurface Profile（Burley，双高光叶）；游戏的 MGAC：G 光泽、B AO；自己画的细纹 + 毛孔（见下"皮肤和头发的近景"）；`MPC_Mishi` 的 Wet / Flush 驱动出汗（汗膜 + 汗珠）和潮红 |
-| `M_Mishi_Eye` | 按游戏 Pinkcore/Heros/Eye 的公式重建：巩膜 / 虹膜、视差、角膜缘、眼睑遮蔽；Clear Coat 做角膜高光 |
+| `M_Mishi_Eye` | 按游戏 Pinkcore/Heros/Eye 的公式重建：巩膜 / 虹膜、视差、角膜缘、眼睑遮蔽；Clear Coat 做角膜高光。男性的眼球（槽 `MaleEyes`）也用它 |
 | `M_Mishi_Hair` | 发片：Default Lit + 各向异性（高光横跨发丝成一条带，游戏的偏移噪声图让每缕头发的带子高低不一），时间抖动的软边（TSR 解成半透明），阴影只由发束的实心部分投 |
 | `M_Mishi_Lash` / `M_Mishi_Tears` | 睫毛眉毛（逐像素受光的半透明）/ 下眼睑的泪线（只有高光） |
 | `M_Mishi_Lit` / `_Masked` / `_Glass` | 房间：平铺、MGA、自发光；都带逐物体的"镜头淡出"（见下）；一律双面（光追需要，见"踩过的坑"） |
@@ -207,6 +207,13 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a01_nk_body_8192.npz pc_a01_nk_body --own E:\game_export\RiseOfEros\_meta\_hq_materials\textures\pc_a01_nk_body_rgbx_Albedo.png --uv-cm 150.5
   python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a_nk_face_4096.npz pc_a_nk_face --out Import\_local\skin\on_pc_a01_nk_body
   python Tools\ue_remote.py Tools\import_slice.py eros15_07 materials
+  # 男性身体（材质槽 MaleBody = 游戏的 pc_a00_nk_body，头和身体在同一张图上）：HS2 的男性底模，fit 带 --pose，bake 带 --set male
+  python E:\code\othercode\ripper_tpose\scripts\honeyselect2\export_model.py --body male --head 0 --no-preview --out _work\hs2
+  & $B -b --factory-startup _work\hs2\bodies\body_male\body_male.blend --python Tools\skin_transfer\hs2_dump.py -- _work\hs2\body_male.npz
+  & $B -b --factory-startup --python Tools\skin_transfer\fit.py -- _work\hs2\body_male.npz Import\eros04_10\male.fbx _work\hs2\fit_male.npz --skin MaleBody --pose --iterations 14
+  & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_male.npz _work\hs2\fit_male.npz Import\eros04_10\male.fbx MaleBody 8192 _work\hs2\corr_male_MaleBody_8192.npz
+  python Tools\skin_transfer\bake.py _work\hs2\corr_male_MaleBody_8192.npz pc_a00_nk_body --set male --own E:\game_export\RiseOfEros\_meta\_hq_materials\textures\pc_a00_nk_body_rgbx_Albedo.png --uv-cm 180.8
+  python Tools\ue_remote.py Tools\import_slice.py eros04_10 materials        # 每个有他的切片各跑一次（图是同一套）
   ```
 
   **一个身体一次配准。** 脸的材质 `pc_a_nk_face` 每个身体都用，但它的烘焙图取决于"整个身体那次配准"：同一张脸换一个身体就是
@@ -247,6 +254,20 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   - **检查过的**（男性隐藏后的近景，原版 / v0.1 / v0.2，干和湿；样张在 `out\skin_v0.2_room\`）：身体自己的特征上没有第二圈、
     接缝或错位；脖子接缝修后还剩一条淡线——**原版自己就有**（两块材质在接缝处的遮蔽值 0.64 / 0.75 和细节法线的密度都不一样，
     出汗的高光把它显出来），没有动。脸的贴图比身体密 3.7 倍而水的法线是按像素算的，所以同样的水珠在脸上比在身上扁——也没有动。
+  - **男性身体**（11-28，用户："把男人也加上吧"；样张 `out\him_skin_sweat\`）。同一套流程，不同的地方：
+    - 包里给男性的只有身体：微法线 `cm_nextgen_body_base_n`（8K，普通法线图，x 在 R）、`SSA_male_body`（**RGB 是他的肤色图**，
+      A 是血管）、`thickness_body_male`；没有光泽图（保持中性），没有头部的微法线和肤色。HS2 男女底模的 UV 布局是同一套
+      （身体重合 0.99，头 0.996），所以按女性布局画的两张汗图对他同样适用——头部就只拿汗和厚度，其余中性。
+    - **姿势**（`fit.py --pose`）：ROE 的男性绑定时手臂下垂 50°，HS2 的是 T 姿。只靠"把地标送到对应位置"的空间变形，
+      手臂的关节下去了、粗细却留在原地——一条被压扁的手臂。所以先把源身体摆成目标的姿势：四肢的每根骨骼按父子顺序转到
+      目标同名骨骼的方向（`CHAINS`），皮肤按它自己的权重跟着走（线性蒙皮），然后才是地标和表面贴合。ROE 男性的骨架叫 Bip000、
+      每根手指两节、脸上没有骨骼：39 对地标。结果：两层皮肤相距中位数 0.35 mm。
+    - **微法线切得更细**（`PACK_MALE` 的 `relief_cells` 256 = 6 mm，女性是 48 = 3 cm）：他的法线图上布满肌肉的棱线，按 3 cm 切
+      会把"包里那个身体的肌肉"带过来，叠在 ROE 男性自己的肌肉旁边成重影；6 mm 只留毛孔和细褶。
+    - 结果：8K 里 65 % 是皮肤（身体 81.7 % / 头 18.3 %），相距中位数 0.56 mm；微法线的坡度 rms 0.12 / 0.14（女性 0.075——男性的
+      皮肤本来就粗一些，干燥时看着自然，没有减）。他自己画的特征（乳头、肚脐、眉毛、嘴唇、头发）照旧保留；包里身体的肚脐
+      落在他肚脐下方 3 cm，在肤色细节里只剩 1 %，看不出。
+    - **他的眼球**见"踩过的坑"：它们和皮肤在同一个材质槽里，第一次对应因此整个作废。
   - 贴图都是别人的作品：只在本机（`Import/_local/`、`_work/` 不进仓库）。
 - **三档皮肤，运行时切换**（`AMishiCouple::SkinVersion`，键 N / 面板"皮肤" / 机位表 `skin`）：**2 = v0.2** 皮肤包烘进来的
   贴图（材质有的话）+ 减弱的平铺纹理 + 包里的汗流水珠；**1 = v0.1** 只有平铺的细纹毛孔和均匀小汗珠；**0 = 原版** 游戏自己的细节法线、
@@ -615,6 +636,16 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 
 ## 踩过的坑
 
+- **男性的眼球用的是他整张身体贴图**（用户 11-28："男人的眼仁是不是不太对"）：游戏把他画成纯色剪影，一个材质同时盖在皮肤的
+  子网格和两个眼球的子网格上——眼球就是女性那套眼球网格（每只 432 个面），UV 各自铺满整张方格，本来是配眼睛贴图的。FBX 导出
+  把共用材质的子网格并成一个槽，UE 里他的皮肤材质就落在眼球上：每只眼球上是一张缩小的全身贴图。现在 Unity 的导出
+  （`MishiUeExport.SplitEyeballs`）把"和身体同材质、但 UV 比身体细 4 倍以上"的子网格改用它自己的材质 `MaleEyes`；导入时这个槽用
+  这一场景里女性的眼睛定义（`M_Mishi_Eye`）+ 游戏里唯一的棕色虹膜（g 系的 `pc_g_nk_eye_iris`）+ 深棕的角膜缘；
+  剪影画法下眼球也换成剪影（`AMishiCouple::HisEyes`）。**同一对眼球还毁掉过皮肤的对应**：把材质的三角形画进 UV 方格时，
+  眼球的三角形盖住了所有 UV 岛——"90 % 的像素对到了头上"，而且因为眼球朝向各异、全走慢路径，算了 38 分钟（正常 4 分钟）。
+  `correspond.py` 现在按同一条规则丢掉这种"别的贴图的零件"（按连通块算；女性的三个材质一块都不丢）。
+  旧切片要重新导出角色（`-mishiWhat actors`）再 `import_slice.py <切片> bodies --force`，然后 `materials level`。
+- **机位表的 `phase` 从 0 数**：`"phase": 3` 才是阶段 4（写成 4 不报错，停在原来的阶段——出汗开关的第一次测试就这样白拍了一轮）。
 - **旁白对错了姿势**：游戏的旁白表（`MemoryModeVisualNovel`，键 `Ines_2_MMAvg01`）里的数字是**服装**的编号，不是姿势的编号，也不是序号；
   和服装对应的姿势是游戏用那套服装的名字命名的那个（道具 `suit_Ines_posture_4_name` = "圣誓者 / 亲密 3"，服装 `suit_Ines_2` = "圣誓者"）。
   Unity 工程原来按姿势号的顺序发旁白，125 个姿势里 99 个拿到的是别的姿势的——4 号（站立后入）下面写的是口交那段，
@@ -718,5 +749,7 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 - Groom 发丝（没有发丝数据，只有发片）、Substrate 皮肤、路径追踪的动态片段（Movie Render Queue）
 - 头发近看像"铁丝"：发片贴图只有 512 px，每缕画得粗。可以试 AI 放大贴图，或在材质里把每缕再分细
 - 潮红只是全身偏暖；脸颊 / 耳朵 / 胸口的局部红晕需要一张区域遮罩（游戏的 MGAC.A 不是）
+- 男性：头部没有皮肤包的微法线和肤色细节（包里没有男性头部的皮肤，只有汗和厚度）；他的阴毛区边缘太柔，没被判成"自己的特征"；
+  眼睛的大小参数和眼睑遮蔽图照用女性的；`pc_a00_nk_dick` 那块材质没有烘焙图（HS2 的对应部位是另一个网格、另一套贴图）
 - 回忆模式、换身体、更多场景和房间、选择菜单
 - 打包（Cook）：中文字体在打包版里需要带一个 CJK 字体

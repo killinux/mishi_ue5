@@ -132,6 +132,9 @@ void AMishiCouple::SetHisStyle(int32 Style)
 	UMaterialInterface* Body = HisStyle == 1 && HisBodySilhouette ? HisBodySilhouette.Get() : HisBodySkin.Get();
 	if (Body && His->GetMaterialIndex(TEXT("MaleBody")) != INDEX_NONE)
 		His->SetMaterialByName(TEXT("MaleBody"), Body);
+	UMaterialInterface* Eyes = HisStyle == 1 && HisBodySilhouette ? HisBodySilhouette.Get() : HisEyes.Get();
+	if (Eyes && His->GetMaterialIndex(TEXT("MaleEyes")) != INDEX_NONE)
+		His->SetMaterialByName(TEXT("MaleEyes"), Eyes);
 }
 
 void AMishiCouple::StepSkin(float DeltaSeconds)

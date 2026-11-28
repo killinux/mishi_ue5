@@ -1,10 +1,14 @@
-"""blender -b --factory-startup --python Tools/skin_transfer/fit.py -- <source.npz> <target.fbx> <out.npz> [--skin a,b] [--iterations N]
+"""blender -b --factory-startup --python Tools/skin_transfer/fit.py -- <source.npz> <target.fbx> <out.npz> [--skin a,b] [--iterations N] [--pose]
 
 Lays one body over another: the body a skin pack was painted for (hs2_dump.py's numbers) is bent until its surface lies on
 the target's (a ROE body as Unity exported it, read by Tools/mishi_fbx.py), so that a point of the target's skin can be
 asked "which point of the pack's body are you?" - and with that, which pixel of the pack's textures (correspond.py).
 
-Both stand in a T pose, facing the same way.  Three steps:
+Both stand in a T pose, facing the same way - or, with --pose, the source is first stood as the target stands: ROE's man is
+bound with his arms 50 degrees down, the pack's man with his arms out.  Each limb bone of the source is turned, parent
+before child, until it points where the target's does, and the source's skin follows by its own weights (linear blend
+skinning; CHAINS below).  A warp of space alone would carry an arm's joints down and leave its girth standing: an arm
+sheared flat.  Then three steps:
 
   1. landmarks: joints of the two rigs that mean the same place (hips, knees, shoulders, every finger joint), and the
      bones that sit ON a feature (nipples, mouth corners, nose wings, eyeballs, brows) - LANDMARKS below.  Not the spine's
@@ -29,7 +33,8 @@ from mathutils.bvhtree import BVHTree
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import mishi_fbx  # noqa: E402
 
-# source (HoneySelect 2, cf_J_*) -> target (ROE, 3ds Max biped); {s} = L / R
+# source (HoneySelect 2, cf_J_* - its men have the same names) -> target (ROE, 3ds Max biped: the women's rig is Bip001,
+# the man's Bip000 with two joints a finger and no bones in his face); {s} = L / R.  A partner the target lacks is skipped.
 FINGERS = (("Thumb", 0), ("Index", 1), ("Middle", 2), ("Ring", 3), ("Little", 4))
 LANDMARKS = [
     ("mid:cf_J_LegUp00_L,cf_J_LegUp00_R", "Bip001 Pelvis"),
@@ -46,6 +51,18 @@ LANDMARKS = [
 for finger, k in FINGERS:
     for j, tail in enumerate(("", "1", "2")):
         LANDMARKS.append(("cf_J_Hand_%s0%d_{s}" % (finger, j + 1), "Bip001 {s} Finger%d%s" % (k, tail)))
+# --pose: (source bone, the source bone it points at, target bone, the target bone that one points at), parent before child
+CHAINS = [
+    ("cf_J_Shoulder_{s}", "cf_J_ArmUp00_{s}", "Bip001 {s} Clavicle", "Bip001 {s} UpperArm"),
+    ("cf_J_ArmUp00_{s}", "cf_J_ArmLow01_{s}", "Bip001 {s} UpperArm", "Bip001 {s} Forearm"),
+    ("cf_J_ArmLow01_{s}", "cf_J_Hand_{s}", "Bip001 {s} Forearm", "Bip001 {s} Hand"),
+    ("cf_J_Hand_{s}", "cf_J_Hand_Middle01_{s}", "Bip001 {s} Hand", "Bip001 {s} Finger2"),
+    ("cf_J_LegUp00_{s}", "cf_J_LegLow01_{s}", "Bip001 {s} Thigh", "Bip001 {s} Calf"),
+    ("cf_J_LegLow01_{s}", "cf_J_Foot01_{s}", "Bip001 {s} Calf", "Bip001 {s} Foot"),
+    ("cf_J_Foot01_{s}", "cf_J_Toes01_{s}", "Bip001 {s} Foot", "Bip001 {s} Toe0"),
+]
+for finger, k in FINGERS:
+    CHAINS.append(("cf_J_Hand_%s01_{s}" % finger, "cf_J_Hand_%s02_{s}" % finger, "Bip001 {s} Finger%d" % k, "Bip001 {s} Finger%d1" % k))
 # the target's materials that are skin (what the source is laid on), unless --skin names others
 SKIN = ("pc_a01_nk_body", "pc_a_nk_face")
 
@@ -110,6 +127,74 @@ class Warp:
         return out
 
 
+def turn_between(a, b):
+    """The rotation (3 x 3) that takes the direction a the short way to b."""
+    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+    v, c = np.cross(a, b), float(np.dot(a, b))
+    if c < -0.9999:
+        # (opposite: half a turn about any axis square to a)
+        axis = np.cross(a, [1.0, 0.0, 0.0] if abs(a[0]) < 0.9 else [0.0, 1.0, 0.0])
+        axis /= np.linalg.norm(axis)
+        return 2.0 * np.outer(axis, axis) - np.eye(3)
+    k = np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+    return np.eye(3) + k + k @ k / (1.0 + c)
+
+
+def posed(src, target_bones, rig):
+    """The source stood as the target stands: its bones' heads, body and head vertices after each limb bone of CHAINS was
+    turned to point where the target's does (a child goes with its parent first), the skin following by its own weights."""
+    names = [str(n) for n in src["bone_names"]]
+    heads = src["bone_heads"].astype(np.float64)
+    parents = src["bone_parents"]
+    turn = {}
+    for a, c, ta, tc in CHAINS:
+        for s in ("L", "R"):
+            sa, sc, t0, t1 = a.format(s=s), c.format(s=s), ta.format(s=s).replace("Bip001", rig), tc.format(s=s).replace("Bip001", rig)
+            if sa in names and sc in names and t0 in target_bones and t1 in target_bones:
+                turn[names.index(sa)] = (names.index(sc), target_bones[t1] - target_bones[t0])
+    depth = np.zeros(len(names), np.int32)
+    for i in range(len(names)):
+        p = parents[i]
+        while p >= 0:
+            depth[i] += 1
+            p = parents[p]
+    world = [np.eye(3)] * len(names)
+    new = heads.copy()
+    most = (0.0, "")
+    for i in np.argsort(depth, kind="stable"):
+        p = parents[i]
+        wp = world[p] if p >= 0 else np.eye(3)
+        if p >= 0:
+            new[i] = wp @ (heads[i] - heads[p]) + new[p]
+        if i in turn:
+            child, want = turn[i]
+            now = wp @ (heads[child] - heads[i])
+            d = turn_between(now, want)
+            angle = float(np.degrees(np.arccos(np.clip(np.dot(now, want) / (np.linalg.norm(now) * np.linalg.norm(want)), -1.0, 1.0))))
+            if angle > most[0]:
+                most = (angle, names[i])
+            world[i] = d @ wp
+        else:
+            world[i] = wp
+    out = {"bone_heads": new}
+    for key in ("body", "head"):
+        verts = src[key + "_verts"].astype(np.float64)
+        groups = [str(g) for g in src[key + "_groups"]]
+        rows = src[key + "_weights"]
+        acc, total = np.zeros_like(verts), np.zeros(len(verts))
+        for g in np.unique(rows[:, 1].astype(np.int64)):
+            if groups[g] not in names:
+                continue
+            b = names.index(groups[g])
+            sel = rows[rows[:, 1].astype(np.int64) == g]
+            vi, w = sel[:, 0].astype(np.int64), sel[:, 2].astype(np.float64)
+            acc[vi] += ((verts[vi] - heads[b]) @ world[b].T + new[b]) * w[:, None]
+            total[vi] += w
+        out[key + "_verts"] = np.where(total[:, None] > 1e-6, acc / np.maximum(total[:, None], 1e-9), verts)
+    print("posed: %d bones turned, the most by %.0f degrees (%s)" % (len(turn), most[0], most[1]))
+    return out
+
+
 def landmarks(src, target_bones):
     names = [str(n) for n in src["bone_names"]]
     heads = src["bone_heads"].astype(np.float64)
@@ -144,8 +229,14 @@ def main():
     src_path, fbx, out = args[:3]
     rounds = int(args[args.index("--iterations") + 1]) if "--iterations" in args else 10
     skin = tuple(args[args.index("--skin") + 1].split(",")) if "--skin" in args else SKIN
-    src = np.load(src_path)
+    src = dict(np.load(src_path))
     tv, tt, bones = load_target(fbx, skin)
+    # which rig the target is: the tables above name the women's
+    rig = "Bip000" if "Bip000 Pelvis" in bones else "Bip001"
+    if rig != "Bip001":
+        bones.update({k.replace(rig, "Bip001", 1): v for k, v in list(bones.items()) if k.startswith(rig)})
+    if "--pose" in args:
+        src.update(posed(src, bones, "Bip001"))
     # the target's rims: edges with one triangle (by spot - the mesh is cut along its UV seams, which are no rims)
     _, tspot = weld(tv)
     te = np.sort(np.vstack([tspot[tt[:, [0, 1]]], tspot[tt[:, [1, 2]]], tspot[tt[:, [2, 0]]]]), axis=1)

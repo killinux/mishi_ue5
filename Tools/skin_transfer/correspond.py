@@ -11,6 +11,12 @@ for its nearest point that faces the same way.
 
 Rows run down the picture (row 0 = v 1), as the textures are stored.  A target mesh that only covers part of a body (the
 skin of an armoured model) works the same: it stands where the whole body stands.
+
+A material slot may hold parts that another picture is meant for: ROE's man is one slot (the game draws him as a flat
+silhouette) - his skin, and two eyeballs whose UVs each cover the whole square.  Drawn into the square they lie over the
+skin's islands (the first run of his body: "90 % on the head", every island under an eyeball's triangles).  Such a part
+is told by the scale of its UV: a shell (what hangs together) whose centimetres per UV unit are under a quarter of the
+largest shell's is not of this layout and is left out.
 """
 import os
 import sys
@@ -26,6 +32,26 @@ import mishi_fbx  # noqa: E402
 
 def to_blender(p):
     return (p[0] / 100.0, -p[2] / 100.0, p[1] / 100.0)
+
+
+def shells(polys, spot):
+    """Which polygons hang together (by the spots of their corners): an id for each polygon."""
+    parent = {}
+
+    def find(x):
+        root = x
+        while parent.get(root, root) != root:
+            root = parent[root]
+        while parent.get(x, x) != root:
+            parent[x], x = root, parent[x]
+        return root
+    for poly in polys:
+        a = find(int(spot[poly[0]]))
+        for v in poly[1:]:
+            b = find(int(spot[v]))
+            if a != b:
+                parent[b] = a
+    return [find(int(spot[poly[0]])) for poly in polys]
 
 
 def main():
@@ -63,8 +89,27 @@ def main():
             np.add.at(acc, spot[tris_all[:, k]], fn)
         vn = acc[spot]
         vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
-        for i, name in enumerate(m["materials"]):
-            if name != material:
+        # the material's shells and the scale of each one's UV; what is far finer than the largest is another picture's
+        mine = [i for i, name in enumerate(m["materials"]) if name == material]
+        shell = shells([m["polygons"][i] for i in mine], spot)
+        area, area_uv, count = {}, {}, {}
+        for i, s in zip(mine, shell):
+            poly, uvs = m["polygons"][i], np.array(m["uvs"][i], np.float64)
+            p = verts[list(poly)]
+            for k in range(1, len(poly) - 1):
+                area[s] = area.get(s, 0.0) + 0.5 * float(np.linalg.norm(np.cross(p[k] - p[0], p[k + 1] - p[0])))
+                e0, e1 = uvs[k] - uvs[0], uvs[k + 1] - uvs[0]
+                area_uv[s] = area_uv.get(s, 0.0) + 0.5 * abs(float(e0[0] * e1[1] - e0[1] * e1[0]))
+            count[s] = count.get(s, 0) + 1
+        scale = {s: np.sqrt(area[s] / max(area_uv[s], 1e-12)) for s in area}
+        largest = max(area, key=area.get)
+        other = {s for s in scale if scale[s] < 0.25 * scale[largest]}
+        if other:
+            print("%s: %d shells; %d of them (%d polygons, %.1f cm2) have a UV %.0f times finer than the skin's %.1f cm a unit - another picture's, left out" % (
+                material, len(area), len(other), sum(count[s] for s in other), sum(area[s] for s in other) * 1e4,
+                scale[largest] / max(scale[s] for s in other), scale[largest] * 100.0))
+        for i, s in zip(mine, shell):
+            if s in other:
                 continue
             poly, uvs = m["polygons"][i], m["uvs"][i]
             for k in range(1, len(poly) - 1):

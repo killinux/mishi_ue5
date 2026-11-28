@@ -3,7 +3,8 @@
 The body a skin pack was painted for, as numbers a fit can work with (numpy only - Blender's Python has it): for the body
 and the head mesh their vertices (metres, Z up, the character facing -Y), triangles, the UV of every triangle corner, the
 skin weights, and where the bones stand.  The .blend is what ripper_tpose's scripts/honeyselect2/export_model.py --body
-female writes (HoneySelect 2's cf_body + head, bones cf_J_*); any body with these object names would do.
+female (or male) writes: HoneySelect 2's o_body_cf (the man's: o_body_cm) + o_head, bones cf_J_* for both; any body with
+these object names would do.
 """
 import sys
 
@@ -11,7 +12,7 @@ import bpy
 import numpy as np
 
 out = sys.argv[sys.argv.index("--") + 1]
-MESHES = {"body": "o_body_cf", "head": "o_head"}
+MESHES = {"body": "o_body_cf" if "o_body_cf" in bpy.data.objects else "o_body_cm", "head": "o_head"}
 EXTRA = ("o_eyebase_L", "o_eyebase_R", "o_tooth", "o_tang")
 data = {}
 arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
