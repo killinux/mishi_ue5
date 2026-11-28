@@ -183,14 +183,20 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a08_hd_skin_8192.npz pc_a08_hd_skin
   python Tools\skin_transfer\bake.py _work\hs2\corr_a08_pc_a_nk_face_4096.npz pc_a_nk_face
   python Tools\ue_remote.py Tools\import_slice.py a08_s01 materials
-  # 蜜室切片的裸体身体：同样三步（fit 不写 --skin 就是 pc_a01_nk_body + pc_a_nk_face），烘焙带 --own
+  # 蜜室切片的裸体身体：同样三步（fit 不写 --skin 就是 pc_a01_nk_body + pc_a_nk_face），身体烘焙带 --own；
+  # 脸要用这个身体自己的配准再烘一套，放进 on_<身体的材质>\（见下"一个身体一次配准"）
   & $B -b --factory-startup --python Tools\skin_transfer\fit.py -- _work\hs2\body_female.npz Import\eros15_07\female.fbx _work\hs2\fit_nude.npz
   & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_female.npz _work\hs2\fit_nude.npz Import\eros15_07\female.fbx pc_a01_nk_body 8192 _work\hs2\corr_nude_pc_a01_nk_body_8192.npz
-  python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a01_nk_body_8192.npz pc_a01_nk_body --own E:\game_export\RiseOfEros\_meta\_hq_materials\textures\pc_a01_nk_body_rgbx_Albedo.png
+  & $B -b --factory-startup --python Tools\skin_transfer\correspond.py -- _work\hs2\body_female.npz _work\hs2\fit_nude.npz Import\eros15_07\female.fbx pc_a_nk_face 4096 _work\hs2\corr_nude_pc_a_nk_face_4096.npz
+  python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a01_nk_body_8192.npz pc_a01_nk_body --own E:\game_export\RiseOfEros\_meta\_hq_materials\textures\pc_a01_nk_body_rgbx_Albedo.png --uv-cm 150.5
+  python Tools\skin_transfer\bake.py _work\hs2\corr_nude_pc_a_nk_face_4096.npz pc_a_nk_face --out Import\_local\skin\on_pc_a01_nk_body
   python Tools\ue_remote.py Tools\import_slice.py eros15_07 materials
   ```
 
-  （脸的材质 `pc_a_nk_face` 两个切片共用一个实例，贴图取自 a08 那次配准；裸体身体取自它自己的配准。）
+  **一个身体一次配准。** 脸的材质 `pc_a_nk_face` 每个身体都用，但它的烘焙图取决于"整个身体那次配准"：同一张脸换一个身体就是
+  另一次配准，拿错了在脖子接缝两侧读到的是皮肤包上相距 3.5 mm 的两点（水珠在接缝处被切成两半）。所以某个身体专用的图放在
+  `Import\_local\skin\on_<那个身体的材质>\`，导入时优先于公共的那套，并且得到自己的实例 `MI_<材质>_on_<身体>`
+  （现在：`pc_a_nk_face` 公共那套来自 a08 的配准，`on_pc_a01_nk_body\` 那套来自裸体身体的配准，接缝两侧相差 0.57 mm）。
 
   - **配准**（`fit.py`）：两个身体都是 T 姿、朝向相同。先用两套骨架里"同一个地方"的骨骼做地标（髋、膝、肩、肘、每个指节；
     以及长在特征上的骨骼：乳头、嘴角、上下唇、鼻翼、眼球、眉头眉尾），求一个把每个地标送到对应位置、其余地方尽量平滑的
@@ -203,9 +209,14 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
     **转到**目标 UV 的方向（两套 UV 在皮肤上的走向不同；转角取"源 UV 沿目标 UV 怎么变"最近的旋转，一边是另一边的镜像时取镜像）；
     `_c` RGB 肤色的细节（源肤色除以它自己的模糊：毛孔、细色斑；嘴唇、鼻孔这类"它的身体的特征"按中尺度对比度去掉，
     幅度限制在 ±12 %），A 光泽的细节；`_w` R 汗流、G 水珠 / 湿斑、B 血管、A 厚度；`_wn` 汗流和水珠的法线。
-    两层皮肤相距超过 1.2 cm 的像素（耳朵里面、指甲）保持中性。`--own <目标材质自己的肤色图>`：目标自己画了特征的地方
-    （乳晕、肚脐、私处——比周围皮肤红得多或暗得多；膝盖、脚底那种淡红晕不算）不套皮肤包的微法线、肤色、光泽和血管，
+    两层皮肤相距超过 1.2 cm 的像素（耳朵里面、指甲）保持中性。每块 UV 岛的内容向外补 64 像素（`pad`）——否则贴图过滤和 mip
+    在岛的边界上读到的是外面的中性值：水面的高度在边界上"掉下去"，在水的法线图里就是一圈斜坡，出汗时沿每条 UV 接缝一条亮线。
+    `--own <目标材质自己的肤色图>`：目标自己画了特征的地方（乳晕、肚脐、阴毛、私处）不套皮肤包的微法线、肤色、光泽和血管，
     边缘柔和过渡：那里的皮肤是给另一个身体的特征画的，会偏开几毫米；皮肤包自己画了特征的地方，身体的微法线同样不取。汗照常。
+    "特征"的判定是**比周围几厘米的皮肤**更红或更暗（`--uv-cm` 给出贴图一个单位在身上是多少厘米，用来定"周围"3.5 cm 和
+    边缘 7 mm），小于 0.2 cm² 的碎点丢掉；整块都红的岛（身体内侧，周围没有皮肤可比）按红度本身算。膝盖、脚底的红晕是缓变的，
+    不算特征。同时写出 `<材质>_hm_m.png`（这些部位的遮罩）：皮肤材质在这里**保留游戏自己的细节法线、不铺平铺纹理**——
+    平铺纹理是"哪儿都不是"的皮肤，铺在乳晕上被拉成一排梳齿，游戏自己的细节图在那里是乳晕的颗粒。`--only-own` 只重写这张遮罩。
     裸体身体要带这个参数烘（a08 露出的皮肤没有这些部位，脸不带——嘴唇的纹理对得上，留着）。
   - **材质**（`SKIN_LOOK["baked"]`）：微法线按源的 2 倍强度叠在 ROE 法线上（按 1 倍在半米外和没有一样——比像素细的起伏会被
     平均掉），平铺块留 0.7 作为"放大的颗粒"；肤色细节 ×1.5、光泽细节 ×1.0、血管 0.3、厚度让薄的地方多透一点光；出汗时
@@ -214,6 +225,12 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
     Unity 导出的带蒙皮的 FBX（`link_hierarchy` 里 KeyError），所以 `mishi_fbx.meshes()` 自己读网格、UV、蒙皮和绑定姿势；
     Unity 导出的 cluster `Transform` 是"网格到骨骼"，网格的绑定位置是 `Transform × TransformLink`；8K 的 BC7 贴图编辑器要压一两分钟，
     期间 Python 里查到的尺寸是 32×32 的占位图。
+    "特征"第一版的判定是"比全身肤色的中位数红多少"：这个身体的乳晕红 0.10-0.15、膝盖的红晕 0.08-0.12、脚底到 0.19——
+    分不开，结果乳晕只标了一半、膝盖上一片碎点。要看的是和周围的反差，不是绝对的红。
+    在已有的贴图资产上重新导入，编辑器会往 `Saved\Crashes` 写两份 ensure 报告（`!bIsAReimport`）——不是崩溃，导入照常完成。
+  - **检查过的**（男性隐藏后的近景，原版 / v0.1 / v0.2，干和湿；样张在 `out\skin_v0.2_room\`）：身体自己的特征上没有第二圈、
+    接缝或错位；脖子接缝修后还剩一条淡线——**原版自己就有**（两块材质在接缝处的遮蔽值 0.64 / 0.75 和细节法线的密度都不一样，
+    出汗的高光把它显出来），没有动。脸的贴图比身体密 3.7 倍而水的法线是按像素算的，所以同样的水珠在脸上比在身上扁——也没有动。
   - 贴图都是别人的作品：只在本机（`Import/_local/`、`_work/` 不进仓库）。
 - **三档皮肤，运行时切换**（`AMishiCouple::SkinVersion`，键 N / 面板"皮肤" / 机位表 `skin`）：**2 = v0.2** 皮肤包烘进来的
   贴图（材质有的话）+ 减弱的平铺纹理 + 包里的汗流水珠；**1 = v0.1** 只有平铺的细纹毛孔和均匀小汗珠；**0 = 原版** 游戏自己的细节法线、
@@ -231,7 +248,14 @@ Unity 材质颜色是 sRGB，转成线性；HDR 自发光保持线性。法线�
   高光才横跨发丝成一条带。粗糙度 0.5 时带子的宽度和游戏自己的 Kajiya-Kay（幂 15）差不多。游戏的 `_ShiftNoiseMap`
   （沿发丝的条纹噪声）让法线沿发丝前后倾一点（`shift_noise`），每缕头发的高光位置不同，带子是参差的而不是一条直线。
   在房间的柔光里几乎没有高光可言，区别主要在阳光下（展示切片）。
-- **开销**：同一时刻前后各测一次（1080p DLAA，蜜室房间）45.2 / 44.6 / 47.8 fps → 45.5 / 45.5 / 47.3 fps，量不出差别。
+- **开销**：v0.1（细纹、汗、头发）同一时刻前后各测一次（1080p DLAA，蜜室房间）45.2 / 44.6 / 47.8 fps → 45.5 / 45.5 / 47.3 fps，
+  量不出差别。v0.2 的烘焙图：三档皮肤是同一个着色器换了几个数，按 N 切换量不出任何东西，所以把皮肤母材质
+  **带着这些图 / 不带 / 再带着**各构建一次来测（`import_slice.py <切片> materials --no-baked` 不带：没有这五张图的采样，也没有
+  由它们算出的东西；再导入一次不带这个参数就恢复）。出汗 0.8、每个机位三轮，当时显卡同时被别的程序占着，所以数值整体偏低，
+  但三次构建受到的占用相同：全景 25.3 / 24.3 / 24.7，脸 23.3 / 22.4 / 22.0，胸口 16.6 / 15.8 / 16.0，腹部 18.1 / 17.9 / 17.5 fps——
+  差别在机器自身的漂移之内。**真正花钱的是出汗的皮肤占满画面**：同一轮里同样的机位，干 26.7 / 25.0 / 21.4 / 21.5，
+  湿 25.2 / 22.1 / 16.2 / 18.3（胸口近景 -24 %）——那是 v0.1 就有的汗膜（粗糙度 0.3 的高光反射），不是这些图。
+  定住的画面连拍 8 帧量闪动（`still_noise.py`，1080p DLAA）：三档皮肤、干湿都一样（房间 0.8-1.1，阳光下 0.7-0.9）。
 
 ## 灯光（`mishi_look.py`）
 
