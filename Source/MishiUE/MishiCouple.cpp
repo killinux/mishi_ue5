@@ -142,7 +142,9 @@ void AMishiCouple::StepSkin(float DeltaSeconds)
 	const int32 Ph = FMath::Clamp(PhaseNow, 0, 3);
 	const float K = SkinEase > 0.f ? 1.f - FMath::Exp(-DeltaSeconds / SkinEase) : 1.f;
 	Flush = FlushHeld >= 0.f ? FMath::Min(FlushHeld, 1.f) : FMath::Lerp(Flush, bSkinState ? FlushByPhase[Ph] : 0.f, K);
-	Wet = WetHeld >= 0.f ? FMath::Min(WetHeld, 1.f) : FMath::Lerp(Wet, bSkinState ? WetByPhase[Ph] : 0.f, K);
+	// (switched off, the sweat is gone in a second - a switch between two looks, not a body cooling down)
+	const float KDry = 1.f - FMath::Exp(-DeltaSeconds / 0.6f);
+	Wet = WetHeld >= 0.f ? FMath::Min(WetHeld, 1.f) : bSweat ? FMath::Lerp(Wet, bSkinState ? WetByPhase[Ph] : 0.f, K) : FMath::Lerp(Wet, 0.f, KDry);
 	if (SkinCollection)
 	{
 		UKismetMaterialLibrary::SetScalarParameterValue(this, SkinCollection, TEXT("Wet"), Wet);

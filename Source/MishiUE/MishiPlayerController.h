@@ -93,6 +93,7 @@ private:
 		bool bHideHer = false;                // "hide_her": him alone (looking at his hands, his wrists)
 		bool bSkillCam = false;       // "skill_cam": the game's own camera has the shot while the skill's timeline runs one
 		int32 Springs = -1, Fx = -1;  // "springs" / "fx": the bone cloth / the skills' effects on or off from this shot on (-1: as it is)
+		int32 Sweat = -1;             // "sweat": the sweat switch (key G) on or off from this shot on (-1: as it is); a held "wet" goes before it
 		int32 Aura = -1;              // "aura": the buff's aura from this shot on - 0 off, 1 in battle, 2 on every part (-1: as it is)
 		int32 CloseUp = -1;           // "closeup": the orbit rides on her face (1) or chest (2) from this shot on, 0 the game's orbit (-1: as it is)
 		int32 Skin = -1;              // "skin": which skin from this shot on - 2 with the pack's maps, 1 the tiled relief, 0 the game's (-1: as it is)

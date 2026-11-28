@@ -218,6 +218,7 @@ void AMishiPlayerController::StartShots(const FString& File)
 		bool bFlag = false;
 		if (O->TryGetBoolField(TEXT("springs"), bFlag)) S.Springs = bFlag ? 1 : 0;
 		if (O->TryGetBoolField(TEXT("fx"), bFlag)) S.Fx = bFlag ? 1 : 0;
+		if (O->TryGetBoolField(TEXT("sweat"), bFlag)) S.Sweat = bFlag ? 1 : 0;
 		if (O->TryGetNumberField(TEXT("aura"), N)) S.Aura = int32(N);
 		if (O->TryGetNumberField(TEXT("skin"), N)) S.Skin = int32(N);
 		if (O->TryGetNumberField(TEXT("closeup"), N)) S.CloseUp = int32(N);
@@ -387,6 +388,8 @@ void AMishiPlayerController::StepShots(float DeltaTime)
 			C->bSprings = S.Springs > 0;
 		if (S.Fx >= 0)
 			C->bFx = S.Fx > 0;
+		if (S.Sweat >= 0)
+			C->bSweat = S.Sweat > 0;
 		if (S.Aura >= 0)
 			C->AuraMode = FMath::Clamp(S.Aura, 0, 2);
 		if (S.Skin >= 0)
@@ -694,6 +697,7 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 		if (WasInputKeyJustPressed(EKeys::K) && C->bShowHim) C->SetHisStyle(1 - C->HisShownStyle);         // his skin / the game's silhouette
 		if (WasInputKeyJustPressed(EKeys::X)) C->SetSfx(!C->bSfx);
 		if (WasInputKeyJustPressed(EKeys::B)) C->bSkinState = !C->bSkinState;
+		if (WasInputKeyJustPressed(EKeys::G)) C->bSweat = !C->bSweat;                                      // with sweat / a dry skin
 		if (WasInputKeyJustPressed(EKeys::N)) C->SkinVersion = (C->SkinVersion + 2) % 3;        // 2 -> 1 -> 0 -> 2
 	}
 	if (WasInputKeyJustPressed(EKeys::H)) ToggleHud();

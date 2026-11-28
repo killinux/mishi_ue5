@@ -144,6 +144,17 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	];
 	Bar->AddSlot().Padding(3.f)
 	[
+		SNew(SBox).Visibility(CoupleOnly)
+		[
+			// "chu han: kai / guan" - sweat on its own (key G): off, the skin stays dry whatever the phase
+			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+					return C && !C->bSweat ? MISHI_TEXT("\u51FA\u6C57\uFF1A\u5173") : MISHI_TEXT("\u51FA\u6C57\uFF1A\u5F00"); }),
+				[this]() { if (AMishiCouple* C = Couple()) C->bSweat = !C->bSweat; },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->bSweat && C->bSkinState; }, 96.f)
+		]
+	];
+	Bar->AddSlot().Padding(3.f)
+	[
 		// "pi fu: v0.2 / v0.1 / yuan ban" - which skin is shown (key N): a skin pack's maps drawn into the bodies' own layout,
 		// the tiled relief and beads alone, the game's own materials
 		Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();

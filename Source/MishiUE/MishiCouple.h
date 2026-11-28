@@ -93,6 +93,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	bool bSkinState = true;
 
+	/** Sweat on a switch of its own (key G, the panel's "出汗"): off = the skin stays dry through every phase, the blush
+	 *  goes on as it did - the scene "without sweat" beside the one with it (user 11-28: "也做个无汗的版"). */
+	UPROPERTY(EditAnywhere, Category = "Mishi")
+	bool bSweat = true;
+
 	/** Seconds the skin takes to follow a new phase. */
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	float SkinEase = 4.f;
