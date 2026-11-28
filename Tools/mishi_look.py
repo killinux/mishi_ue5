@@ -414,7 +414,11 @@ def ensure_sky_map_material(masters_folder, default_tex):
     material does not compile, the dome gets the default material and the sky stays black behind the fog)."""
     path = masters_folder + "/M_Mishi_SkyMap"
     if eal.does_asset_exist(path):
-        eal.delete_asset(path)
+        # (never built again while it is there: every showcase slice's MI_Sky hangs on this one master.  It used to be deleted
+        # and made anew with each level - which emptied the parent of the instances loaded at that moment: g05_s01's sky went
+        # black when a06_s01 was imported after it in the same editor session, a08_s01's - not loaded - kept its sky.
+        # To change the graph, delete the asset by hand and build every showcase level again.)
+        return unreal.load_asset(path)
     mat = asset_tools.create_asset("M_Mishi_SkyMap", masters_folder, unreal.Material, unreal.MaterialFactoryNew())
     mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     mat.set_editor_property("two_sided", True)

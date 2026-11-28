@@ -574,7 +574,15 @@ def step_materials(slice_data, room_materials, her, him):
                     f = os.path.join(SRC, "textures", tname + (alt[0] if alt else ".png"))
                 room_tex.setdefault(tname, (f, role_of(slot)))
             else:
-                game_tex.setdefault(tname, (cache_texture_file(tname, slot), role_of(slot)))
+                f = cache_texture_file(tname, slot)
+                if not os.path.isfile(f):
+                    # (the cache holds the textures of the materials its own exports use, and a suit's weapon may not be
+                    # among them - a06's.  The slice's Unity export carries a copy: AssetRipper's PNG, a normal map as plain
+                    # RGB like the cache's __nrm copies)
+                    alt = os.path.join(SRC, "textures", tname + ".png")
+                    if os.path.isfile(alt):
+                        f = alt
+                game_tex.setdefault(tname, (f, role_of(slot)))
     textures, n1 = import_textures(room_tex, DST + "/Textures")
     gtextures, n2 = import_textures(game_tex, "/Game/Mishi/Characters/Textures", character=True)
     report["steps"]["textures"] = {"room": len(textures), "characters": len(gtextures), "imported": n1 + n2}

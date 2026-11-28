@@ -1,0 +1,218 @@
+[
+ {
+  "name": "_stance",
+  "phase": 0,
+  "seconds": 1.5,
+  "yaw": 30,
+  "y": 0.5,
+  "zoom": 1.6
+ },
+ {
+  "name": "skill1_00_0.35s",
+  "seconds": 0.35,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9,
+  "phase": 4
+ },
+ {
+  "name": "skill1_01_0.41s",
+  "seconds": 0.06,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_02_0.83s",
+  "seconds": 0.42,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_03_0.95s",
+  "seconds": 0.12,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_04_1.30s",
+  "seconds": 0.35,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_05_1.78s",
+  "seconds": 0.48,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_06_1.90s",
+  "seconds": 0.12,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_07_2.38s",
+  "seconds": 0.48,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_08_2.50s",
+  "seconds": 0.12,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_09_3.16s",
+  "seconds": 0.66,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill1_10_3.58s",
+  "seconds": 0.42,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "_skill1_end",
+  "seconds": 1.55,
+  "yaw": 30,
+  "y": 0.5,
+  "zoom": 1.6
+ },
+ {
+  "name": "skill2_00_0.35s",
+  "seconds": 0.35,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9,
+  "phase": 5
+ },
+ {
+  "name": "skill2_01_1.08s",
+  "seconds": 0.73,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill2_02_2.17s",
+  "seconds": 1.09,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill2_03_2.29s",
+  "seconds": 0.12,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill2_04_3.17s",
+  "seconds": 0.88,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill2_05_3.82s",
+  "seconds": 0.65,
+  "hold": 0.4,
+  "yaw": 35,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "_skill2_end",
+  "seconds": 1.55,
+  "yaw": 30,
+  "y": 0.5,
+  "zoom": 1.6
+ },
+ {
+  "name": "skill3_00_0.35s",
+  "seconds": 0.35,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9,
+  "phase": 6
+ },
+ {
+  "name": "skill3_01_1.40s",
+  "seconds": 1.05,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill3_02_2.80s",
+  "seconds": 1.4,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill3_03_2.92s",
+  "seconds": 0.12,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill3_04_3.90s",
+  "seconds": 0.98,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "skill3_05_4.65s",
+  "seconds": 0.75,
+  "hold": 0.4,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.9
+ },
+ {
+  "name": "_skill3_end",
+  "seconds": 1.55,
+  "yaw": 30,
+  "y": 0.5,
+  "zoom": 1.6
+ }
+]

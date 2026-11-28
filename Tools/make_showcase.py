@@ -37,17 +37,21 @@ ACTIONS = [
     ("skill3", "大招", "skill_03", "idle_01", None),                        # the super
     ("hurt", "受击", "hurt", "idle_01", None),
     ("down", "倒下", "die", "rip", (2.5, 3.0)),
+    # the stance an ultra-rare suit has besides (g04, g05, a06 - a08 has none): the tenth button, key 0
+    ("ur", "UR 姿态", "idle_ur01", None, (5.0, 5.0)),
 ]
+# what the panel calls her: the heroine and the suit's name in the game (BattleSuitName: suit_Ines_8, suit_Ines_6, suit_Luf_5)
+TITLES = {"a08": "伊娜丝 · 嫉妒女神（a08）", "a06": "伊娜丝 · 审音者（a06）", "g05": "露芙 · 丰收圣女（g05）"}
 # the skill sheet's actions that drive each part
 SHEET_ACTION = {"skill_01": "skill1", "skill_02": "skill2", "skill_03": "skill3", "hurt": "hurt", "die": "die"}
 # The unit's looping buff timeline - the "ur" aura of an ultra-rare suit: flames and sparks round her, FX_H_demonize_ur on the
 # unit's pivot - is no part of hers: it burns beside them.  In battle, as the game has it: on the stance, the skills, a hit;
 # not on the showcase idle and its reactions (the gallery's poses), and never where she is down.
-AURA_PARTS = ("idle_01", "skill_01", "skill_02", "skill_03", "hurt")
+AURA_PARTS = ("idle_01", "idle_ur01", "skill_01", "skill_02", "skill_03", "hurt")
 AURA_NEVER = ("die", "rip")
 AURA_FOLLOW = "Bip001 Pelvis"           # it stays under her hips (see AMishiCouple::StepAura)
 # the auto mode's round: the buttons by trigger
-AUTO = ["show", "react1", "show", "react2", "stance", "skill1", "stance", "skill2", "stance", "skill3", "stance", "hurt", "stance"]
+AUTO = ["show", "react1", "show", "react2", "ur", "stance", "skill1", "stance", "skill2", "stance", "skill3", "stance", "hurt", "stance"]
 
 
 # ---------------------------------------------------------------------------------------------------------------- bone cloth
@@ -59,6 +63,9 @@ AUTO = ["show", "react1", "show", "react2", "stance", "skill1", "stance", "skill
 SPRING_KINDS = [
     ("swag", re.compile(r"skirt_chain", re.I)),            # a chain hung between two points of the belt: both ends fastened
     ("chain", re.compile(r"^chain\d|dec_wrist|^tassel_|^accessories|^bone02[89]$", re.I)),
+    # (g05's ribands - the shawl down her back and the two at her sides; their "_Dummy" bones are the chains' fixed roots.
+    # Her clips key them all, and her hair: the keys are what the cloth is pulled to, the wind and the lag come on top)
+    ("ribbon", re.compile(r"^riband_(?!.*dummy)", re.I)),
     ("skirt", re.compile(r"skirt", re.I)),
     ("hair", re.compile(r"hair|braid|bangs|hari", re.I)),
 ]
@@ -75,6 +82,9 @@ SPRING_PRESETS = {
     "swag": {"gravity": 5.0, "damping": 0.08, "radius": 0.012, "restore": 0.12, "attenuation": 0.8, "limit_root": 30.0, "limit_tip": 80.0,
              "inertia": 0.5, "move_limit": 3.0, "world_inertia": 0.5, "world_move_limit": 3.0, "particle_limit": 4.0, "floor": False,
              "pin_tip": True, "wind": 0.5, "colliders": ["hips", "thigh_l", "thigh_r"]},
+    "ribbon": {"gravity": 3.0, "damping": 0.1, "radius": 0.015, "restore": 0.16, "attenuation": 0.8, "limit_root": 10.0, "limit_tip": 45.0,
+               "inertia": 0.3, "move_limit": 2.0, "world_inertia": 0.25, "world_move_limit": 1.5, "particle_limit": 3.0, "floor": False,
+               "wind": 1.0, "colliders": ["hips", "thigh_l", "thigh_r", "torso"]},
     "skirt": {"gravity": 5.0, "damping": 0.15, "radius": 0.02, "restore": 0.2, "attenuation": 0.8, "limit_root": 5.0, "limit_tip": 35.0,
               "inertia": 0.3, "move_limit": 3.0, "depth_inertia": 0.3, "world_inertia": 0.15, "world_move_limit": 1.0,
               "world_turn_limit": 120.0, "max_distance_root": 0.03, "max_distance_tip": 0.25, "particle_limit": 4.0, "floor": True,
@@ -314,7 +324,7 @@ def main():
 
     out = {
         "kind": "showcase",
-        "posture": "%s_%s" % (show["character"], show["stage"]), "title": "Inase %s" % show["character"], "outfit": show["character"],
+        "posture": "%s_%s" % (show["character"], show["stage"]), "title": TITLES.get(show["character"], show["character"]), "outfit": show["character"],
         "scene": show["character"], "room": show["stage"],
         "space": show.get("space"),
         "female": dict(show["female"], character=show["character"]),

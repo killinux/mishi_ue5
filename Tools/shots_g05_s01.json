@@ -1,0 +1,163 @@
+[
+ {
+  "name": "01_default",
+  "phase": 0,
+  "seconds": 2.5,
+  "yaw": 0,
+  "y": -1,
+  "zoom": 1.0
+ },
+ {
+  "name": "02_front",
+  "seconds": 1.0,
+  "yaw": 20,
+  "y": 0.5,
+  "zoom": 1.0
+ },
+ {
+  "name": "03_back",
+  "seconds": 1.0,
+  "yaw": 200,
+  "y": 0.55,
+  "zoom": 1.0
+ },
+ {
+  "name": "04_side",
+  "seconds": 1.0,
+  "yaw": 110,
+  "y": 0.5,
+  "zoom": 0.9
+ },
+ {
+  "name": "05_wide",
+  "seconds": 1.0,
+  "yaw": 30,
+  "y": 0.6,
+  "zoom": 2.6
+ },
+ {
+  "name": "06_face",
+  "seconds": 1.0,
+  "bone": "Bip001-Head",
+  "offset_local": [
+   6,
+   -6,
+   0
+  ],
+  "from": [
+   0.25,
+   -1,
+   0.3
+  ],
+  "distance": 50
+ },
+ {
+  "name": "07_chest",
+  "seconds": 1.0,
+  "bone": "Bip001-Spine2",
+  "from": [
+   0.3,
+   -1,
+   0.25
+  ],
+  "distance": 80
+ },
+ {
+  "name": "08_waist",
+  "seconds": 1.0,
+  "bone": "Bip001-Pelvis",
+  "from": [
+   0.2,
+   -1,
+   0.5
+  ],
+  "distance": 90
+ },
+ {
+  "name": "09_legs",
+  "seconds": 1.0,
+  "bone": "Bip001-L-Calf",
+  "from": [
+   0.1,
+   -1,
+   0.6
+  ],
+  "distance": 90
+ },
+ {
+  "name": "10_show",
+  "phase": 1,
+  "seconds": 2.0,
+  "yaw": -15,
+  "y": 0.5,
+  "zoom": 0.9
+ },
+ {
+  "name": "11_show_back",
+  "seconds": 1.0,
+  "yaw": 165,
+  "y": 0.5,
+  "zoom": 1.0
+ },
+ {
+  "name": "12_show_face",
+  "seconds": 1.0,
+  "bone": "Bip001-Head",
+  "offset_local": [
+   6,
+   -6,
+   0
+  ],
+  "from": [
+   0.25,
+   -1,
+   0.3
+  ],
+  "distance": 50
+ },
+ {
+  "name": "13_ur",
+  "phase": 9,
+  "seconds": 2.5,
+  "yaw": 15,
+  "y": 0.5,
+  "zoom": 1.0
+ },
+ {
+  "name": "14_ur_side",
+  "seconds": 1.0,
+  "yaw": 100,
+  "y": 0.5,
+  "zoom": 1.0
+ },
+ {
+  "name": "15_hud",
+  "phase": 0,
+  "seconds": 2.5,
+  "yaw": 0,
+  "y": -1,
+  "zoom": 1.0,
+  "hud": true
+ },
+ {
+  "name": "16_low",
+  "seconds": 1.0,
+  "yaw": 35,
+  "y": 0.12,
+  "zoom": 1.1
+ },
+ {
+  "name": "17_left",
+  "seconds": 1.0,
+  "yaw": -70,
+  "y": 0.5,
+  "zoom": 1.0
+ },
+ {
+  "name": "18_high",
+  "seconds": 1.0,
+  "yaw": 150,
+  "y": 0.95,
+  "zoom": 1.6
+ }
+]

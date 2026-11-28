@@ -15,6 +15,10 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
   启动：`powershell -File Tools\ue.ps1 play -Slice eros04_10`。
 - **伊娜丝 a08 × 战斗舞台 s01**（`a08_s01`）—— 不是蜜室：金甲巨剑的 a08 站在城堡屋顶的战斗舞台上，
   按钮是她的战斗动作（按游戏的技能时间线复现），为的是把高清盔甲看清楚。见下面"展示切片"一节。
+- **伊娜丝 · 审音者 a06 × s01**（`a06_s01`）—— 同样的战斗场面：红旗袍和她的古琴（武器），三个技能是抛琴、踢击、抚琴。
+  启动：`powershell -File Tools\ue.ps1 play -Slice a06_s01`。
+- **露芙 · 丰收圣女 g05 × s01**（`g05_s01`）—— 悬空坐着的女神：月桂光环、披帛、及地长发；技能是光球、麦苗、麦穗。
+  启动：`powershell -File Tools\ue.ps1 play -Slice g05_s01`。
 
 ## 目录
 
@@ -411,7 +415,49 @@ powershell -File Tools\ue.ps1 stills -Slice a08_s01 -Tag fx -Shots Tools\stills_
 powershell -File Tools\ue.ps1 shots  -Slice a08_s01 -Tag fx -Shots Tools\shots_a08_s01_fx.json
 ```
 
-**动作**（面板上 9 个按钮，数字键 1-9）：战斗站姿、展示、互动 1 / 2、技能 1 / 2、大招、受击、倒下。一次性动作播完回到
+**再加一个展示切片**（11-28 用户："把inase的审音者的战斗场面也做出来"、"还有丰收女神的" → `a06_s01`、`g05_s01`）。服装的中文名在
+游戏的 `BattleSuitName` 表里（`suit_Ines_6_name` = 审音者；编号 N 就是模型 a0N；"丰收女神"在表里叫"丰收圣女" = `suit_Luf_5` = g05）。
+Unity 工程里已经有这套服装（`Assets\ROE\<id>`、`Assets\RoeFighter\Generated\<id>`、清单里有它）的，直接走上面三条导出命令
+（`-mishiChar <id>`），然后：
+
+```powershell
+python Tools\make_showcase.py Import\<id>_s01            # slice.json + 天空（同一个舞台再做一遍也行，--no-sky 跳过）
+python Tools\make_showcase_shots.py Import\<id>_s01      # 没有手写机位表的切片：按 slice.json 写出 Tools\shots_<切片>.json 和 _fx.json（每个技能的命中时刻）
+python Tools\ue_remote.py Tools\import_slice.py <id>_s01
+powershell -File Tools\ue.ps1 shots -Slice <id>_s01 -Tag look
+powershell -File Tools\ue.ps1 shots -Slice <id>_s01 -Tag fx -Shots Tools\shots_<id>_s01_fx.json
+```
+
+Unity 工程里**还没有**的服装（a06 就是）先从游戏安装目录还原，步骤是 `roe_fighter_unity2` 的 README"加一个角色的步骤"，工具在
+`mishi\tools` 里都有（都在 PowerShell 里跑；`import_*.py` 要等 Unity 没在运行时再跑）：
+
+```powershell
+cd E:\code\othercode\mishi
+python tools\cab_index.py build _work\cab_index.json                 # 游戏更新过就重建（约一分钟）
+python tools\stage_bundles.py _work\bundles_a06 a06                  # 这套服装的 49 个包
+Start-Process E:\tools\AssetRipper_1.3.14\AssetRipper.GUI.Free.exe -ArgumentList '--headless','--port','5599','--log-path','E:\code\othercode\mishi\_work\assetripper.log' -WindowStyle Hidden
+python tools\rip.py --bundles _work\bundles_a06 --out _work\ripped_a06 --log _work\assetripper.log
+mkdir _work\bundles_skills_a06; copy "<游戏包目录>\gameplay_prefab_suit_ines_6.ab" _work\bundles_skills_a06\
+python tools\rip.py --bundles _work\bundles_skills_a06 --out _work\ripped_skills_a06 --log _work\assetripper.log   # 拉进 832 个依赖包，约 5 分钟
+python tools\import_ripped.py --src _work\ripped_a06\ExportedProject\Assets
+python tools\import_skills.py suit_ines_6 --src _work\ripped_skills_a06\ExportedProject\Assets    # 约 12 分钟（要扫一遍整个 Assets\ROE）
+python tools\skill_sheet.py suit_ines_6 a06
+python tools\roe_showcase.py a06                                                                   # 展示姿势的两句语音
+.\tools\unity_batch.ps1 -Method RoeFighter.EditorTools.RoeFighterBuilder.BuildAll -Graphics -Extra '-roeChars','a06'
+```
+
+之后和上面一样导出。这两个切片遇到并修掉的：
+
+- g05 的骨架**没有 `Root` 节点**，两足骨架直接挂在模型根上，导出器原来找不到模型根（`ExportActor` 现在两种都认）。
+- a06 的武器（古琴 `wp_a_06`）的贴图不在游戏材质缓存里（缓存只导出它自己用到的材质的贴图）——`import_slice.py` 找不到时
+  改用切片自己 `textures\` 里 Unity 导出的那份（AssetRipper 的 PNG，法线图是普通 RGB，和缓存的 `__nrm` 副本一样）。
+- a06 有一个特效材质用的是游戏的 UI 粒子着色器（`Pinkcore/UIParticles/Default`），工程里没有对应的：指到普通粒子着色器上
+  （`mishi\tools\import_ripped.py` 的 `SHADER_MAP` 里也加了）。
+- 天空见"踩过的坑"：同一个编辑器里连着导入两个展示切片，前一个的天空会变黑。
+- 屏幕扭曲型的 MutateDistortion 特效层仍然不画（g05 有 11 个材质、a06 有 4 个是这种）。
+
+**动作**（面板上 9 或 10 个按钮，数字键 1-9、0）：战斗站姿、展示、互动 1 / 2、技能 1 / 2、大招、受击、倒下，
+UR 的服装（g04、g05、a06，a08 没有）还有第十个"UR 姿态"（片段 `idle_ur01`）。一次性动作播完回到
 站姿或展示姿势；"自动"按一张表轮流播。`slice.json` 的 `kind` 是 `showcase`，没有男性，阶段就是按钮。
 
 **时间线**：游戏每个技能是一条 Timeline。`make_showcase.py` 把它变成每个部位的 cues，`AMishiCouple::FireCues` 到点执行：
@@ -459,8 +505,11 @@ powershell -File Tools\ue.ps1 shots  -Slice a08_s01 -Tag fx -Shots Tools\shots_a
 每个子步从根到梢依次约束 —— 拉回基准角度、角度上限、胶囊碰撞体（胯、大腿、小腿、躯干、脖子、头）、离基准的最大距离、
 地面；骨长不变。**两端都挂住的链**（腰链从胯挂到腰带，`pin_tip`）多做一遍从梢往根的 FABRIK。
 种类和数字在 `make_showcase.py` 的 `SPRING_KINDS` / `SPRING_PRESETS` / `SPRING_COLLIDERS` / `WIND`，写进 `slice.json` 的 `springs`；
-按骨骼名分类（`skirt_chain` → swag，`chain` / `tassel` / `accessories` → chain，`skirt` → skirt，`hair` / `braid` / `bangs` → hair），
-胸部骨骼不碰（片段里有关键帧）。切换部位时不重置（惯性带过去），`Seek` 时重置。
+按骨骼名分类（`skirt_chain` → swag，`chain` / `tassel` / `accessories` → chain，`Riband_*` → ribbon（g05 的披帛和两侧飘带），
+`skirt` → skirt，`hair` / `braid` / `bangs` → hair），胸部骨骼不碰（片段里有关键帧）。切换部位时不重置（惯性带过去），`Seek` 时重置。
+不是每套服装都像 a08 那样"片段里不动"：g05 的头发和飘带、a06 的头发和裙摆在每个片段里都有关键帧（手 K 的）——
+弹簧照样加在上面，关键帧是布料被拉回去的姿势，风和惯性是额外的。想知道某个切片的片段动了哪些骨骼，量每根骨骼相对片段第一帧
+转了多少度就行（`female_anim.bin`：每帧每根骨骼 10 个数，位置 3 + 四元数 4 + 缩放 3）。
 
 **技能特效**（`FMishiFx`，面板"特效"开关）：a08 三个技能共 20 个特效预制体、148 个粒子系统（Shuriken，没有脚本）。
 Niagara 没法用脚本搭出来（Python 能碰到的接口几乎是空的），所以走 **Unity 烘焙、UE 回放**：
@@ -636,6 +685,15 @@ a08_s01 展示动作、RTX 4090 Laptop、硬件光追 Lumen（帧/秒）：
 
 ## 踩过的坑
 
+- **连着导入两个展示切片，前一个的天空变黑**：展示切片的天空球材质实例 `MI_Sky` 都挂在同一个母材质 `M_Mishi_SkyMap` 上，
+  而 `mishi_look.py` 原来每建一次关卡就把这个母材质**删掉重建**。删除时编辑器把"当前已加载的引用者"的父材质清空——
+  同一次编辑器会话里先导入 g05_s01 再导入 a06_s01，g05 的天空实例没了父材质，整片天空是黑的（没加载的 a08_s01 不受影响）。
+  一开始以为是 g05 技能里的压暗特效，关掉特效和光环重拍天空照样黑才排除。现在母材质只在不存在时才建；要改它的图就手动删掉，
+  再把每个展示切片的 `level` 重建一遍。
+- **显卡被别的任务占满时 Unreal 会整个挂掉**（11-28 两次 `DXGI_ERROR_DEVICE_HUNG`：游戏窗口和编辑器先后退出）。那不是系统内存：
+  当时另一个项目的任务占着 16 GB 显存里的 16 GB。开编辑器、导入、拍图之前先看一眼：
+  `nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv`，按进程看用
+  `(Get-Counter '\GPU Process Memory(*)\Dedicated Usage').CounterSamples`。
 - **男性的眼球用的是他整张身体贴图**（用户 11-28："男人的眼仁是不是不太对"）：游戏把他画成纯色剪影，一个材质同时盖在皮肤的
   子网格和两个眼球的子网格上——眼球就是女性那套眼球网格（每只 432 个面），UV 各自铺满整张方格，本来是配眼睛贴图的。FBX 导出
   把共用材质的子网格并成一个槽，UE 里他的皮肤材质就落在眼球上：每只眼球上是一张缩小的全身贴图。现在 Unity 的导出
