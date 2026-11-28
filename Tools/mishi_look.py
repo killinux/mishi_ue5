@@ -120,9 +120,25 @@ STYLES = {
 }
 
 
+# What a room needs differently from the tables above, by its number (slice.json "room").  The eros table was turned in
+# room 07 - a room with a window and the game's baked sun through it.  "x": factors on the table's numbers (after the
+# style's), "set": numbers in their place.
+#   10  the round library.  No window light at all: the game lights it with a disc of "sky" under the whole ceiling (baked,
+#       7.3 m in radius, shining down), a second one shining up into the dome, and forty lamps.  At room 07's share of a
+#       panel (a tenth: there the sun's bounce fills the room) the library was a cave - a wide picture's mean level 25 of
+#       255 where room 07 has 80; the game's own pictures of the two rooms are 109 and 127.
+#       The disc sits 6 cm under the ceiling's slab, INSIDE its carved rings (they hang down to 5.40 m, the disc is at 5.46):
+#       the game's bake does not care - a light map's rays go through the back of a one-sided mesh - but here every room
+#       mesh is two-sided (for the ray tracing) and the rings let the light through in the middle alone: a lit bed in a
+#       black room.  "panel_drop": metres a panel that shines down is lowered by.
+LOOK_ROOMS = {
+    "10": {"x": {"panel_scale": 4.2, "lamp_scale": 2.5}, "set": {"panel_drop": 0.30}},
+}
+
+
 def use_look(slice_data, style=None):
-    """The look of this slice's kind: the eros room's table, or it with the showcase's differences, and the style's on top
-    (one dict object: the functions below read LOOK)."""
+    """The look of this slice's kind: the eros room's table, or it with the showcase's differences, the style's on top and
+    then what the slice's room asks for (one dict object: the functions below read LOOK)."""
     kind = "showcase" if (slice_data.get("kind") or "eros") == "showcase" else "eros"
     LOOK.clear()
     LOOK.update(LOOK_BASE)
@@ -133,6 +149,10 @@ def use_look(slice_data, style=None):
         raise ValueError("no style %r (there are: %s)" % (style, ", ".join(sorted(STYLES))))
     LOOK.update(STYLES[style][kind])
     LOOK["style"] = style
+    room = LOOK_ROOMS.get(str(slice_data.get("room") or ""), {}) if kind == "eros" else {}
+    for k, v in room.get("x", {}).items():
+        LOOK[k] = LOOK[k] * v
+    LOOK.update(room.get("set", {}))
 
 
 eal = unreal.EditorAssetLibrary
@@ -333,11 +353,20 @@ def place_lights(eas, lights, anchor, warn, sky=None):
             light_common(c, L, color, warn, 0.2)
         elif kind in ("Rectangle", "Area", "Disc"):
             size = L.get("area_size", [1.0, 1.0])
+            if kind == "Disc":
+                # (Unity keeps a disc's radius in the first number - the second is whatever a rectangle left there; a square
+                # panel of the disc's area stands in for it)
+                size = [math.sqrt(math.pi) * size[0]] * 2
+            if fwd_u[1] < -0.7 and LOOK.get("panel_drop"):
+                # (a panel shining down from inside the ceiling's own meshes: out from among them)
+                pos = ue_pos([L["position"][0], L["position"][1] - LOOK["panel_drop"], L["position"][2]])
             a = spawn(eas, unreal.RectLight, pos, rot, L["name"], "Mishi/Lights")
             c = a.get_component_by_class(unreal.RectLightComponent)
             setp(c, "intensity_units", unreal.LightUnits.CANDELAS, warn)
             setp(c, "intensity", intensity * size[0] * size[1] * LOOK["panel_scale"], warn)      # radiance x area
-            setp(c, "attenuation_radius", max(L["range"], 6.0) * 100.0, warn)
+            # (the reach is counted from the panel's middle: half its width more, or a panel as wide as the room fades out
+            # before it gets to the walls - the library's is 13 m across, with a reach of 10)
+            setp(c, "attenuation_radius", (max(L["range"], 6.0) + 0.5 * max(size)) * 100.0, warn)
             setp(c, "source_width", size[0] * 100.0, warn)
             setp(c, "source_height", size[1] * 100.0, warn)
             light_common(c, L, color, warn, 0.0)
