@@ -1,0 +1,18 @@
+[
+  {"name": "01_game",      "phase": 0, "at": 2.0, "seconds": 1.5, "yaw": 0, "y": -1, "zoom": 1.0},
+  {"name": "02_side",      "at": 2.0, "seconds": 1.0, "yaw": 90, "y": 0.5, "zoom": 0.9},
+  {"name": "03_front",     "at": 2.0, "seconds": 1.0, "yaw": 180, "y": 0.5, "zoom": 0.9},
+  {"name": "04_other",     "at": 2.0, "seconds": 1.0, "yaw": 270, "y": 0.5, "zoom": 0.9},
+  {"name": "05_wide",      "at": 2.0, "seconds": 1.0, "yaw": 50, "y": 0.65, "zoom": 1.9},
+  {"name": "06_room",      "at": 2.0, "seconds": 1.0, "yaw": 235, "y": 0.62, "zoom": 2.4},
+  {"name": "07_face",      "at": 2.0, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [6, -6, 0], "from": [0.25, -1, 0.5], "distance": 46},
+  {"name": "08_profile",   "at": 2.0, "seconds": 1.0, "bone": "Bip001-Head", "offset_local": [5, -4, 0], "from": [0.2, -0.3, 1], "distance": 50},
+  {"name": "09_back",      "at": 2.0, "seconds": 1.0, "bone": "Bip001-Spine2", "from": [0.5, 1, 0.9], "distance": 70},
+  {"name": "10_back_skin", "at": 2.0, "seconds": 1.0, "bone": "Bip001-Spine1", "from": [0.2, 1, 0.5], "distance": 32},
+  {"name": "11_p2",        "phase": 1, "seconds": 3.0, "yaw": 100, "y": 0.55, "zoom": 0.8},
+  {"name": "12_p3",        "phase": 2, "seconds": 3.0, "yaw": 260, "y": 0.55, "zoom": 0.85},
+  {"name": "13_p3_front",  "seconds": 1.0, "yaw": 200, "y": 0.4, "zoom": 0.75},
+  {"name": "14_p4",        "phase": 3, "seconds": 3.0, "yaw": 80, "y": 0.6, "zoom": 0.75},
+  {"name": "15_p4_far",    "seconds": 1.0, "yaw": 160, "y": 0.75, "zoom": 2.2},
+  {"name": "16_p4_back",   "seconds": 1.0, "bone": "Bip001-Spine1", "from": [0.3, 1, 0.8], "distance": 45}
+]

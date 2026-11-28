@@ -11,6 +11,8 @@ Unity 版在 `E:\code\othercode\mishi`（GitHub killinux/mishi），它负责把
 - **Ines（伊娜丝）eros15 × 房间 07**（`eros15_07`）—— 蜜室的一个场景。
 - **伊娜丝 eros06 × 房间 10**（`eros06_10`）—— 蜜室的第二个场景：6 号姿势（床上后入），10 号房间是四周书架、地球仪、
   书桌的圆形书房（游戏里叫"场景 11"）。启动：`powershell -File Tools\ue.ps1 play -Slice eros06_10`。
+- **伊娜丝 eros04 × 房间 10**（`eros04_10`）—— 4 号姿势（站立后入：她扶着床头弯腰，他站在身后），同一间书房。
+  启动：`powershell -File Tools\ue.ps1 play -Slice eros04_10`。
 - **伊娜丝 a08 × 战斗舞台 s01**（`a08_s01`）—— 不是蜜室：金甲巨剑的 a08 站在城堡屋顶的战斗舞台上，
   按钮是她的战斗动作（按游戏的技能时间线复现），为的是把高清盔甲看清楚。见下面"展示切片"一节。
 
@@ -89,7 +91,12 @@ powershell -File Tools\ue.ps1 build ; powershell -File Tools\ue.ps1 import
 **再加一个蜜室切片**（另一个姿势 × 另一个房间）是同一条路，不用改代码：上面两条命令换成那个姿势和房间
 （`suit_<角色>_posture_<N>`：Unity 工程 `Assets/ROE/<服装>/eros_data/<服装>.json` 里列着每套服装的姿势；房间 `01`-`12`、`premium`），
 切片的名字是 `eros<N>_<房间>`；然后编辑器开着跑 `python Tools\ue_remote.py Tools\import_slice.py <切片>`（全部步骤，约 2 分钟），
-`ue.ps1 shots -Slice <切片>` 出一组检查图，`ue.ps1 play -Slice <切片>` 运行。`eros06_10` 就是这样加的（Unity 导出 10 分钟）。
+`ue.ps1 shots -Slice <切片>` 出一组检查图，`ue.ps1 play -Slice <切片>` 运行。`eros06_10`、`eros04_10` 就是这样加的
+（Unity 导出各 10 分钟；第二个用的是调过灯的房间，除了机位表什么都没改）。
+**一个角色有哪些姿势、各是什么样**：Unity 工程的 `python -I tools\pose_survey.py <家族字母>`（a = 伊娜丝）直接从游戏的动作数据里
+算每个姿势每一段里她怎么躺、他在她的哪一侧——游戏自带镜头的截图常常只拍到他的背，旁白表又是按序号而不是按姿势号对的，
+两样都靠不住。伊娜丝的背后位：4（站立）、5（背后抱起）、6（跪趴）、8（手推车）、28（卡在木墙里，带道具——导出流程还不带道具）、
+15 和 21（她在上面背对他）。
 要自己动手的只有两处：机位表（`Tools/shots_<切片>.json`——通用那张是给仰卧的姿势配的，趴着的姿势有的机位会钻到床下），
 和**房间的灯**（`mishi_look.py` 的 `LOOK_ROOMS`，见"灯光"一节：每个房间烘焙时用的灯不一样）。皮肤包的烘焙图按材质名自动带上。
 
