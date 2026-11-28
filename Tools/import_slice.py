@@ -563,7 +563,10 @@ def step_materials(slice_data, room_materials, her, him):
     log("textures: %d room + %d character (%d imported)" % (len(textures), len(gtextures), n1 + n2))
 
     # a skin pack's maps drawn into a material's own layout (Tools/skin_transfer/bake.py -> Import/_local/skin): brought in
-    # when the file is new or has changed; never in the repository
+    # when the file is new or has changed; never in the repository.  Maps that go with one body lie in
+    # Import/_local/skin/on_<a material of that body>/ and are taken before the common ones - a face's maps come from the
+    # fit of the whole body it sits on, and the same face on another body is another fit (beside the wrong body's maps
+    # the drops are cut in two at the neck); the instance made with them is that body's own (MI_<material>_on_<body>).
     baked_dir = os.path.join(PROJECT, "Import", "_local", "skin")
     baked_folder = "/Game/Mishi/Characters/Textures/Baked"
     stamps = os.path.join(PROJECT, "Saved", "MishiDefaults")
@@ -572,11 +575,16 @@ def step_materials(slice_data, room_materials, her, him):
         if d["source"] == "unity":
             continue
         got = {}
-        for key, role in (("n", "normal"), ("c", "linear"), ("w", "linear"), ("wn", "normal")):
-            f = os.path.join(baked_dir, "%s_hm_%s.png" % (name, key))
+        where, tag = baked_dir, ""
+        for other in sorted(used):
+            if other != name and os.path.isfile(os.path.join(baked_dir, "on_" + other, "%s_hm_n.png" % name)):
+                where, tag = os.path.join(baked_dir, "on_" + other), "_on_" + mishi_materials.safe_name(other)
+                break
+        for key, role in (("n", "normal"), ("c", "linear"), ("w", "linear"), ("wn", "normal"), ("m", "linear")):
+            f = os.path.join(where, "%s_hm_%s.png" % (name, key))
             if not os.path.isfile(f):
                 continue
-            asset = "T_%s_hm_%s" % (mishi_materials.safe_name(name), key)
+            asset = "T_%s%s_hm_%s" % (mishi_materials.safe_name(name), tag, key)
             stamp = os.path.join(stamps, asset + ".txt")
             mark = "%d %d" % (os.path.getsize(f), int(os.path.getmtime(f)))
             have = ""
@@ -599,7 +607,8 @@ def step_materials(slice_data, room_materials, her, him):
             got[key] = unreal.load_asset(asset_path(baked_folder, asset))
         if got:
             d["baked"] = got
-            log("%s: a skin pack's maps (%s)%s" % (name, ", ".join(sorted(got)), ""))
+            d["instance_tag"] = tag
+            log("%s: a skin pack's maps (%s)%s" % (name, ", ".join(sorted(got)), " - this body's own: " + os.path.basename(where) if tag else ""))
     if n3:
         log("baked skin maps: %d imported" % n3)
 

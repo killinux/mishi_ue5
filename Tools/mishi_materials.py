@@ -24,7 +24,7 @@ import os
 
 import unreal
 
-VERSION = 20
+VERSION = 21
 MATS = "/Game/Mishi/Materials"
 
 mel = unreal.MaterialEditingLibrary
@@ -271,6 +271,8 @@ SKIN_LOOK = {
     # relief stays under it at "tile" of its strength, for the grain that is larger than life); "colour" / "gloss": its fine
     # colour and gloss; "veins"; "thin": more light through the thin places; "sweat": the pack's drops and rivulets (the
     # tiled beads stay at "beads" of their number).
+    # With them may come <material>_hm_m.png: what the body has painted as its own (an areola, the navel) - there the game's
+    # own detail map stays and no tiled relief is laid, whichever of the two newer skins is shown.
     # (the relief at twice the pack's own strength: at 1 a skin half a metre from the lens is as smooth as without it - what
     # is finer than the picture's pixels is averaged away, as the first tile at life size was)
     "baked": {"relief": 2.0, "colour": 1.5, "gloss": 1.0, "veins": 0.3, "thin": 0.6, "sweat": 1.0, "tile": 0.7, "beads": 0.5},
@@ -309,11 +311,8 @@ def build_skin(d, mpc, profile):
     sw_baked = g.collection(mpc, "SkinBaked")
     sw_relief = g.collection(mpc, "SkinRelief")
     relief_on = g.scalar("ReliefOn", 0.0)             # 1: this instance has the tiled relief in the game's detail map's place
-    # the pores are for close-ups: gone by 2.5 m, where they would only shimmer
-    fade = g.custom("return Strength * (1.0 - ReliefOn * Relief) * saturate((400.0 - Depth) / 250.0);",
-                    [("Strength", dstrength, ""), ("Depth", depth, ""), ("ReliefOn", relief_on, ""), ("Relief", sw_relief, "")], F1,
-                    desc="detail fade", x=-1500)
-    nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
+    # what the body has painted as its own - an areola, the navel (Tools/skin_transfer/bake.py --own; black: nothing)
+    b_own = g.tex("BakedOwn", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
     # the relief made here (SKIN_LOOK): furrows in R, G and pores in B, A, tiled so that it is as fine on a face as on a thigh
     rtiling = g.scalar("ReliefTiling", 60.0)
     ruv = g.custom("return UV * Tiling;", [("UV", uv, ""), ("Tiling", rtiling, "")], F2, desc="relief uv", x=-1900)
@@ -371,12 +370,25 @@ float2 n = N.xy * on;
 return float3(n, sqrt(saturate(1.0 - dot(n, n))));
 """, [("W", b_wet, "RGBA"), ("N", b_wetn, "RGB"), ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, ""), ("Baked", sw_baked, "")], F3,
                      [("Water", F1)], "sweat that stands and runs", x=-1500)
+    # The game's own detail map.  In its place stands the relief made here (ReliefOn; the "skin" switch can go back) - but not
+    # on what the body has painted as its own: the tile is skin of nowhere in particular, and stretched over an areola it was
+    # a comb of streaks where the game's map is the areola's grain (seen 11-28 with him hidden: his hand lies there).  There
+    # the game's map stays, and is treated as the relief is: nothing of it under a bead, less under a film of sweat.
+    # (the pores are for close-ups: gone by 2.5 m, where they would only shimmer)
+    fade = g.custom("""
+float mine = ReliefOn * Relief;
+float kept = mine * saturate(Own) * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
+return Strength * ((1.0 - mine) + kept) * saturate((400.0 - Depth) / 250.0);
+""", [("Strength", dstrength, ""), ("Depth", depth, ""), ("ReliefOn", relief_on, ""), ("Relief", sw_relief, ""), ("Own", b_own, "R"),
+      ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, "")], F1, desc="detail fade", x=-1100)
+    nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
     rel = g.custom("""
 float near = saturate((400.0 - Depth) / 250.0);
 near *= 1.0 + Patches * Field.x;
 near *= 1.0 - max(Bead, Water);                           // under a bead the skin's own relief is not seen
 near *= 1.0 - 0.65 * saturate(Wet);                       // and a film of sweat fills the furrows: wet skin is smoother
 near *= Relief * lerp(1.0, Under, Baked);                 // (the "skin" switch; under a pack's own relief the tile is weaker)
+near *= 1.0 - saturate(Own);                              // (not on what the body has painted as its own: the game's map is there)
 float2 l = (D.rg - 0.5) * 2.0 * Lines * near;
 float2 p = (D.ba - 0.5) * 2.0 * Pores * near;
 // where the surface tilts it is a furrow's or a pit's wall: less of the sky gets in there
@@ -384,7 +396,7 @@ Cavity = saturate(length(l) * 1.3 + length(p) * 1.7);
 return normalize(float3(l + p, 1.0));
 """, [("D", relief, "RGBA"), ("Lines", lines, ""), ("Pores", pores, ""), ("Depth", depth, ""), ("Field", fields, ""), ("Patches", patches, ""),
       ("Bead", bead, "Bead"), ("Wet", wet, ""), ("Water", water, "Water"), ("Relief", sw_relief, ""), ("Baked", sw_baked, ""),
-      ("Under", baked_tile, "")], F3, [("Cavity", F1)], "relief", x=-1100)
+      ("Under", baked_tile, ""), ("Own", b_own, "R")], F3, [("Cavity", F1)], "relief", x=-1100)
     one = g.const(1.0, x=-1500)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", rel, ""), ("Weight", one, "")], F3, desc="normal + relief", x=-700)
     baked = g.custom("""
@@ -870,7 +882,8 @@ def make_instance(name, d, lookup, masters, folder):
     """A MaterialInstanceConstant MI_<name> of the right master, filled from the game material's slots, floats and colours."""
     kind = classify(name, d)
     master = masters[KIND_MASTER[kind]]
-    inst = "MI_" + safe_name(name)
+    # (d["instance_tag"]: this slice's body has maps of its own for the material - an instance of its own beside the common one)
+    inst = "MI_" + safe_name(name) + d.get("instance_tag", "")
     path = "%s/%s" % (folder, inst)
     if eal.does_asset_exist(path):
         mi = unreal.load_asset(path)
@@ -938,6 +951,8 @@ def make_instance(name, d, lookup, masters, folder):
             if baked.get("wn") is not None:
                 mel.set_material_instance_texture_parameter_value(mi, "BakedWetNormal", baked["wn"])
                 scalar("BakedSweat", look["sweat"])
+        if baked.get("m") is not None:
+            mel.set_material_instance_texture_parameter_value(mi, "BakedOwn", baked["m"])
         if d.get("uv_cm"):
             scalar("UvCm", d["uv_cm"])
             if masters.get("_sweat") is not None:
