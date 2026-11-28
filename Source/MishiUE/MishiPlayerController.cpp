@@ -690,7 +690,8 @@ void AMishiPlayerController::PlayerTick(float DeltaTime)
 				C->GoPhase(I);
 		if (WasInputKeyJustPressed(EKeys::SpaceBar)) C->bAuto = !C->bAuto;
 		if (WasInputKeyJustPressed(EKeys::V)) C->VoiceLanguage = (C->VoiceLanguage + 1) % 3;
-		if (WasInputKeyJustPressed(EKeys::M)) C->SetHisStyle((C->HisStyle + 1) % 3);
+		if (WasInputKeyJustPressed(EKeys::M)) C->SetShowHim(!C->bShowHim);                                 // him: there / hidden
+		if (WasInputKeyJustPressed(EKeys::K) && C->bShowHim) C->SetHisStyle(1 - C->HisShownStyle);         // his skin / the game's silhouette
 		if (WasInputKeyJustPressed(EKeys::X)) C->SetSfx(!C->bSfx);
 		if (WasInputKeyJustPressed(EKeys::B)) C->bSkinState = !C->bSkinState;
 		if (WasInputKeyJustPressed(EKeys::N)) C->SkinVersion = (C->SkinVersion + 2) % 3;        // 2 -> 1 -> 0 -> 2

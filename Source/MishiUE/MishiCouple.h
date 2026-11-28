@@ -74,6 +74,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	int32 HisStyle = 0;
 
+	/** How he is drawn when he is drawn (0 or 1): what showing him again comes back to.  Hiding him is one key and one
+	 *  button of its own (user 11-28: "加个开关，可以隐藏男人") - it used to be the third stop of a round through the styles. */
+	int32 HisShownStyle = 0;
+
 	UPROPERTY(EditAnywhere, Category = "Mishi")
 	TObjectPtr<UMaterialInterface> HisBodySkin;
 

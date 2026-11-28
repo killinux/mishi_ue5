@@ -124,6 +124,8 @@ void AMishiCouple::PlaceBodies()
 void AMishiCouple::SetHisStyle(int32 Style)
 {
 	HisStyle = FMath::Clamp(Style, 0, 2);
+	if (HisStyle != 2)
+		HisShownStyle = HisStyle;
 	bShowHim = HisStyle != 2;
 	His->SetVisibility(bShowHim);
 	// the body's slot keeps the name of the Unity project's stand-in material
@@ -368,7 +370,7 @@ void AMishiCouple::SkipCues()
 
 void AMishiCouple::SetShowHim(bool bShow)
 {
-	SetHisStyle(bShow ? (HisStyle == 2 ? 0 : HisStyle) : 2);
+	SetHisStyle(bShow ? HisShownStyle : 2);
 }
 
 void AMishiCouple::PlayVoice(const FString& PartName)

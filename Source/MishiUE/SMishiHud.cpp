@@ -108,11 +108,21 @@ void SMishiHud::Construct(const FArguments& InArgs)
 	[
 		SNew(SBox).Visibility(CoupleOnly)
 		[
-			// "nan xing: pi fu / jian ying / yin cang" - his skin, the game's flat silhouette, hidden
+			// "nan xing: xian shi / yin cang" - him: there or hidden (key M)
 			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
-					const int32 St = C ? C->HisStyle : 0;
-					return St == 1 ? MISHI_TEXT("\u7537\u6027\uFF1A\u526A\u5F71") : St == 2 ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u76AE\u80A4"); }),
-				[this]() { if (AMishiCouple* C = Couple()) C->SetHisStyle((C->HisStyle + 1) % 3); }, nullptr, 128.f)
+					return C && !C->bShowHim ? MISHI_TEXT("\u7537\u6027\uFF1A\u9690\u85CF") : MISHI_TEXT("\u7537\u6027\uFF1A\u663E\u793A"); }),
+				[this]() { if (AMishiCouple* C = Couple()) C->SetShowHim(!C->bShowHim); },
+				[this]() { const AMishiCouple* C = Couple(); return C && C->bShowHim; }, 112.f)
+		]
+	];
+	Bar->AddSlot().Padding(3.f)
+	[
+		SNew(SBox).Visibility(CoupleOnly)
+		[
+			// "hua fa: pi fu / jian ying" - how he is drawn while he is there: his skin, the game's flat silhouette (key K)
+			Button(TAttribute<FText>::CreateLambda([this]() { const AMishiCouple* C = Couple();
+					return C && C->HisShownStyle == 1 ? MISHI_TEXT("\u753B\u6CD5\uFF1A\u526A\u5F71") : MISHI_TEXT("\u753B\u6CD5\uFF1A\u76AE\u80A4"); }),
+				[this]() { if (AMishiCouple* C = Couple()) { if (C->bShowHim) C->SetHisStyle(1 - C->HisShownStyle); } }, nullptr, 112.f)
 		]
 	];
 	Bar->AddSlot().Padding(3.f)
