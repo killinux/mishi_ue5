@@ -23,7 +23,10 @@ import os
 import re
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mishi_fbx  # noqa: E402
 import mishi_sky  # noqa: E402
 
 # the buttons, in order: (trigger, label, part, what follows a one-shot, seconds the auto mode stays when the part loops)
@@ -107,13 +110,49 @@ SPRING_COLLIDERS = [
 WIND = {"direction": [-0.85, 0.0, -0.5], "strength": 6.0, "gust": 0.75, "period": 3.4}
 
 
+# A chain shorter than this (metres, root to tip in the bind pose) is a tight piece - a06's back panel lies on her buttocks,
+# two chains of 21 cm - and gets the numbers of SHORT: under the long skirt's ones its tip was free to go 25 cm from where
+# the clip has it, more than its own length.
+SHORT_CHAIN = 0.35
+WIDE_THIGH = (3.0, 3.5)       # cm the cloth's thigh may be wider than the skin's, at the hip and at the knee
+GLUTE_MARGIN = 1.2            # cm a buttock's sphere stands beyond where the cloth rests
+SHORT = {"limit_tip": 20.0, "restore": 0.3, "max_distance_root": 0.01, "max_distance_tip_share": 0.3}
+
+
+def chains_of(names, bones, parents):
+    """The chains among the named bones: lists of bone names, root first (a bone whose parent is not among them starts one)."""
+    named = set(names)
+    child = {}
+    for i, b in enumerate(bones):
+        p = bones[parents[i]] if parents[i] >= 0 else None
+        if b in named and p in named:
+            child.setdefault(p, b)
+    out = []
+    for i, b in enumerate(bones):
+        if b in named and (bones[parents[i]] if parents[i] >= 0 else None) not in named:
+            chain = [b]
+            while chain[-1] in child:
+                chain.append(child[chain[-1]])
+            out.append(chain)
+    return out
+
+
 def springs(d):
-    """The sets of bones the cloth solver takes, by kind, from the rig's own bone names (female_anim.json)."""
+    """The sets of bones the cloth solver takes, by kind, from the rig's own bone names (female_anim.json), and the body they
+    lie against, fitted to the slice's own mesh (female.fbx)."""
     path = os.path.join(d, "female_anim.json")
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:
-        bones = json.load(f)["bones"]
+        rig = json.load(f)
+    bones, parents = rig["bones"], rig.get("parents") or [-1] * len(rig["bones"])
+    fbx = None
+    if os.path.isfile(os.path.join(d, "female.fbx")):
+        try:
+            fbx = mishi_fbx.meshes(os.path.join(d, "female.fbx"))
+        except Exception as e:
+            print("bone cloth: female.fbx not read (%s) - the stock colliders" % e)
+    place = {k: np.array(v) / 100.0 for k, v in fbx["bones"].items()} if fbx else {}
     sets = []
     for kind, _ in SPRING_KINDS:
         names = []
@@ -122,11 +161,162 @@ def springs(d):
                 continue
             if next((k for k, rx in SPRING_KINDS if rx.search(b)), None) == kind:
                 names.append(b)
-        if names:
-            sets.append(dict(SPRING_PRESETS[kind], kind=kind, bones=names))
+        if not names:
+            continue
+        short = []
+        if kind == "skirt" and place:
+            for chain in chains_of(names, bones, parents):
+                pts = [place[b] for b in chain if b in place]
+                length = sum(float(np.linalg.norm(q - p)) for p, q in zip(pts, pts[1:]))
+                if len(pts) == len(chain) and 0.0 < length < SHORT_CHAIN:
+                    short.append((chain, length))
+        tight = {b for chain, _ in short for b in chain}
+        rest = [b for b in names if b not in tight]
+        if rest:
+            sets.append(dict(SPRING_PRESETS[kind], kind=kind, bones=rest))
+        if short:
+            length = sum(L for _, L in short) / len(short)
+            preset = dict(SPRING_PRESETS[kind], limit_tip=SHORT["limit_tip"], restore=SHORT["restore"], max_distance_root=SHORT["max_distance_root"],
+                          max_distance_tip=round(SHORT["max_distance_tip_share"] * length, 3))
+            sets.append(dict(preset, kind=kind + "_short", bones=[b for chain, _ in short for b in chain]))
     if not sets:
         return None
-    return {"wind": WIND, "colliders": SPRING_COLLIDERS, "sets": sets}
+    colliders = body_colliders(fbx, sets, bones, parents) if fbx else [dict(c) for c in SPRING_COLLIDERS]
+    return {"wind": WIND, "colliders": colliders, "sets": sets}
+
+
+def body_colliders(fbx, sets, bones, parents):
+    """SPRING_COLLIDERS with the thighs as thick as this body's are and a sphere for each buttock, from the skin of the slice's
+    own mesh in its bind pose (centimetres, +Y up, +Z ahead of her).
+
+    The stock list had the hips as one sphere at the pelvis and the thighs as capsules from the hip joints: behind them was
+    nothing - where the buttocks are.  A cloth chain is pulled straight down by its weight, and a panel that lies over a
+    buttock (a06's qipao: 1 cm off the skin at rest) went through it (user 11-28: "裙子和腿和屁股有一点点穿模").
+    A collider stands inside the skin by the cloth's own particle radius, and no further out than the cloth's bones at rest:
+    the pose the clip gives is never pushed."""
+    out = [dict(c) for c in SPRING_COLLIDERS]
+    B = {k: np.array(v) for k, v in fbx["bones"].items()}
+    M = {k: np.array(v).reshape(4, 4) for k, v in fbx.get("bone_matrices", {}).items()}
+    need = ("Bip001 Pelvis", "Bip001 L Thigh", "Bip001 R Thigh", "Bip001 L Calf", "Bip001 R Calf")
+    body = max(fbx["meshes"], key=lambda m: sum(1 for n in m["materials"] if "skin" in n.lower()))
+    V = np.array(body["vertices"])
+    idx = sorted({v for poly, mat in zip(body["polygons"], body["materials"]) if "skin" in mat.lower() for v in poly})
+    if any(b not in B or b not in M for b in need) or len(idx) < 500:
+        return out
+    S = V[idx]
+    pelvis = B["Bip001 Pelvis"]
+    # the cloth's particles at rest (the bones' tails: every bone of a chain but its root, and where the last one points)
+    cloth = [s for s in sets if "hips" in s.get("colliders", [])]
+    rest = []
+    for s in cloth:
+        for chain in chains_of(s["bones"], bones, parents):
+            pts = [B[b] for b in chain if b in B]
+            rest += [(p, s["radius"] * 100.0) for p in pts[1:]]
+            if len(pts) > 1:
+                rest.append((pts[-1] + (pts[-1] - pts[-2]), s["radius"] * 100.0))
+
+    def clear(centre_of, radius_of):
+        """The largest radius scale (<= 1) under which no particle at rest is inside the collider (a hair's breadth to spare)."""
+        k = 1.0
+        for p, r in rest:
+            c, R = centre_of(p), radius_of(p)
+            dist = float(np.linalg.norm(p - c))
+            if R > 0.0 and dist - r - 0.2 < R * k:
+                k = min(k, max((dist - r - 0.2) / R, 0.0))
+        return k
+
+    report = []
+    # the thighs: how thick the skin is round the bone, in front of it and on its outer side (behind it is the buttock, on the
+    # inside the other leg), a hand below the joint and a hand above the knee
+    for side, name in (("L", "thigh_l"), ("R", "thigh_r")):
+        a, b = B["Bip001 %s Thigh" % side], B["Bip001 %s Calf" % side]
+        axis = (b - a) / np.linalg.norm(b - a)
+        length = float(np.linalg.norm(b - a))
+        out_dir = np.array([np.sign(a[0] - pelvis[0]) or 1.0, 0.0, 0.0])
+        rel = S - a
+        t = rel @ axis
+        radial = rel - np.outer(t, axis)
+        dist = np.linalg.norm(radial, axis=1)
+        mine = (radial @ np.array([0.0, 0.0, 1.0]) > -0.25 * dist) & (radial @ out_dir > -0.25 * dist) & (dist < 16.0)
+        rr = []
+        for lo, hi in ((0.12, 0.38), (0.62, 0.92)):
+            sel = mine & (t > lo * length) & (t < hi * length)
+            rr.append((0.5 * (lo + hi), float(np.percentile(dist[sel], 75)) if sel.sum() >= 12 else None))
+        if rr[0][1] is None or rr[1][1] is None:
+            continue
+        slope = (rr[1][1] - rr[0][1]) / (rr[1][0] - rr[0][0])
+        ra = float(np.clip(rr[0][1] - slope * rr[0][0], 5.0, 12.0))
+        # (at the joint itself the body is no rounder than it is wide: the hip's skin beside the joint, a finger over it -
+        # drawn with mishi.SpringColliders 1, the first fit's top stood two centimetres out of her hip)
+        level = S[np.abs(S[:, 1] - a[1]) < 3.0]
+        if len(level):
+            ra = min(ra, float(np.abs(level[:, 0] - pelvis[0]).max() - abs(a[0] - pelvis[0])) + 1.0)
+        rb = float(np.clip(rr[1][1] + slope * (1.0 - rr[1][0]), 3.5, 9.0))
+
+        def on(p, a=a, axis=axis, length=length):
+            return a + axis * float(np.clip((p - a) @ axis, 0.0, length))
+
+        def rad(p, a=a, axis=axis, length=length, ra=ra, rb=rb):
+            return ra + (rb - ra) * float(np.clip((p - a) @ axis / length, 0.0, 1.0))
+        # A panel is wider than its chain of bones: a06's front panel lies on the front of both thighs while its two chains
+        # hang between them, 5 cm inside the thighs' axes - a thigh coming forward met the panel's edge long before the
+        # collider met a bone, and showed through the edge.  So the thigh the cloth feels is wider than the real one, by
+        # WIDE at most and never so wide that it touches the cloth at rest: the panel rides on the leg from its first move.
+        wide_a, wide_b = ra + WIDE_THIGH[0], rb + WIDE_THIGH[1]
+
+        def rad_wide(p, a=a, axis=axis, length=length, ra=wide_a, rb=wide_b):
+            return ra + (rb - ra) * float(np.clip((p - a) @ axis / length, 0.0, 1.0))
+        k = clear(on, rad_wide)
+        # (nothing of the cloth rests near this thigh - g05's ribands: its own thickness.  And never thinner than the skin:
+        # a08's side panels start at the hip, inside any thigh there is - their first links hardly move, they are no measure.)
+        fa, fb = (ra, rb) if k > 0.999 else (max(wide_a * k, ra), max(wide_b * k, rb))
+        col = next(c for c in out if c["name"] == name)
+        col["ra"], col["rb"] = round(fa / 100.0, 4), round(fb / 100.0, 4)
+        report.append("%s %.1f -> %.1f cm (the skin %.1f -> %.1f)" % (name, fa, fb, ra, rb))
+    # the buttocks: a sphere through the skin behind each hip joint, hung on the pelvis
+    P = M["Bip001 Pelvis"]
+    for side, name in (("L", "glute_l"), ("R", "glute_r")):
+        sx = np.sign(B["Bip001 %s Thigh" % side][0] - pelvis[0]) or 1.0
+        reach = 1.6 * abs(B["Bip001 %s Thigh" % side][0] - pelvis[0])
+        x = (S[:, 0] - pelvis[0]) * sx
+        p = S[(x > 1.0) & (x < reach) & (S[:, 2] < pelvis[2] - 3.0) & (S[:, 1] > pelvis[1] - 16.0) & (S[:, 1] < pelvis[1] + 6.0)]
+        if len(p) < 40:
+            continue
+        sol = np.linalg.lstsq(np.hstack([2.0 * p, np.ones((len(p), 1))]), (p * p).sum(1), rcond=None)[0]
+        c = sol[:3]
+        r = float(np.sqrt(max(sol[3] + (c * c).sum(), 0.0)))
+        if not 5.0 < r < 16.0:
+            continue
+        inside = max((s["radius"] for s in cloth), default=0.02) * 100.0            # the cloth's own radius: the skin, not beyond
+        R = max(r - inside, 3.0)
+        k = clear(lambda q, c=c: c, lambda q, R=R: R)
+        # ... plus a margin that does lift the panel off the buttock, a centimetre: the top of a06's back panel hangs on the
+        # spine while the skin under it goes with the pelvis, and in her battle stance (hips cocked) the hip came through
+        # the panel's upper edge by a sliver.  Tried: without it the sliver stays, with 1.2 cm it is gone.
+        # (only where cloth does rest on the buttock: with none near - g05 - the sphere is the skin's)
+        R = R * k + (GLUTE_MARGIN if k < 0.999 else 0.0)
+        k = 1.0
+        w = c - pelvis
+        local = (float(w @ P[0, :3]), float(w @ P[1, :3]), float(w @ P[2, :3]))    # in the bone's axes as the file has them
+        out.append({"name": name, "a": "Bip001 Pelvis", "ra": round(R * k / 100.0, 4),
+                    # (Unreal's import turns a bone's own y round: the file's (x, y, z) is its (x, -y, z))
+                    "offset_a": [round(local[0], 2), round(-local[1], 2), round(local[2], 2)]})
+        report.append("%s %.1f cm (the skin's sphere %.1f) at %.1f down, %.1f behind, %.1f to her %s" % (
+            name, R * k, r, -w[1], -w[2], abs(w[0]), "left" if w[0] > 0 else "right"))
+        # ... and the same sphere again on the thigh, a centimetre smaller: the game hangs half of a buttock's skin on a helper
+        # bone of the thigh (a06: Xtra04 / Xtra02 47 %, the pelvis 35 %).  With the hips cocked or a leg back the buttock goes
+        # half the way with the leg; the two spheres are one at rest and part as the leg turns, the skin between them.
+        T = M["Bip001 %s Thigh" % side]
+        wt = c - B["Bip001 %s Thigh" % side]
+        lt = (float(wt @ T[0, :3]), float(wt @ T[1, :3]), float(wt @ T[2, :3]))
+        out.append({"name": name + "_leg", "a": "Bip001 %s Thigh" % side, "ra": round(max(R * k - 1.0, 2.0) / 100.0, 4),
+                    "offset_a": [round(lt[0], 2), round(-lt[1], 2), round(lt[2], 2)]})
+    names = [c["name"] for c in out if c["name"].startswith("glute_")]
+    for s in cloth:
+        s["colliders"] = list(s["colliders"]) + [n for n in names if n not in s["colliders"]]
+    if report:
+        print("bone cloth, the body: " + "; ".join(report))
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------- effects

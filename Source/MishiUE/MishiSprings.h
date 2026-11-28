@@ -76,6 +76,14 @@ public:
 	void Apply(FCompactPose& Pose, const FBoneContainer& Bones, const FTransform& ComponentToWorld, const FTransform& ActorToWorld, float DeltaSeconds,
 		float FloorZ);
 	int32 NumChains() const { return Chains.Num(); }
+	/** The colliders as they stood in the last Apply (world, cm) - for a view of them (console: mishi.SpringColliders 1). */
+	struct FColliderShape
+	{
+		FVector A, B;
+		float RA, RB;
+		bool bSphere;
+	};
+	void ColliderShapes(TArray<FColliderShape>& Out) const;
 	int32 NumBones() const;
 
 private:

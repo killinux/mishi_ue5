@@ -3,6 +3,10 @@
 #include "Animation/AnimationPoseData.h"
 #include "AnimationRuntime.h"
 
+// mishi.SpringColliders 1: the bone cloth's colliders drawn over the body (green wire spheres, a capsule as its two ends and
+// its axis) - to see that a fitted buttock or thigh stands where the skin is (a shot's "cmd" can set it)
+static TAutoConsoleVariable<int32> CVarMishiSpringColliders(TEXT("mishi.SpringColliders"), 0, TEXT("1: draw the bone cloth's colliders"));
+
 namespace
 {
 	FAnimExtractContext Extract(const FMishiClipSlot& Slot)
@@ -43,6 +47,22 @@ bool FMishiAnimProxy::Evaluate(FPoseContext& Output)
 			Springs.Apply(Output.Pose, GetRequiredBones(), GetComponentTransform(), GetActorTransform(), GetDeltaSeconds(), FloorZ);
 		else
 			Springs.Reset();
+#if ENABLE_ANIM_DRAW_DEBUG
+		if (bSpringsOn && CVarMishiSpringColliders.GetValueOnAnyThread() > 0)
+		{
+			TArray<FMishiSprings::FColliderShape> Shapes;
+			Springs.ColliderShapes(Shapes);
+			for (const FMishiSprings::FColliderShape& Shape : Shapes)
+			{
+				AnimDrawDebugSphere(Shape.A, Shape.RA, 16, FColor::Green, false, -1.f, 0.f);
+				if (!Shape.bSphere)
+				{
+					AnimDrawDebugSphere(Shape.B, Shape.RB, 16, FColor::Green, false, -1.f, 0.f);
+					AnimDrawDebugLine(Shape.A, Shape.B, FColor::Green, false, -1.f, 0.f);
+				}
+			}
+		}
+#endif
 	}
 	return true;
 }

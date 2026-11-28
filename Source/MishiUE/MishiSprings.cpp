@@ -365,6 +365,13 @@ void FMishiSprings::Simulate(FChain& C, float Dt, float WPrev, float W, float Fl
 		C.XOld = C.X;
 }
 
+void FMishiSprings::ColliderShapes(TArray<FColliderShape>& Out) const
+{
+	for (int32 K = 0; K < Capsules.Num(); ++K)
+		if (Capsules[K].bValid)
+			Out.Add({Capsules[K].PA, Capsules[K].PB, Setup.Colliders[K].RA, Setup.Colliders[K].RB, Capsules[K].B.GetInt() == INDEX_NONE});
+}
+
 void FMishiSprings::Apply(FCompactPose& Pose, const FBoneContainer& Bones, const FTransform& ComponentToWorld, const FTransform& ActorToWorld,
 	float DeltaSeconds, float FloorZ)
 {

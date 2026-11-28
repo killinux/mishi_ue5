@@ -187,7 +187,9 @@ def meshes(path):
         {"meshes": [{"name": the mesh node's name,
                      "vertices": [(x, y, z)], "polygons": [[vertex index]], "uvs": [[(u, v)] for each polygon's corners],
                      "materials": [material name for each polygon], "weights": {bone name: ([vertex index], [weight])}}],
-         "bones": {bone name: (x, y, z)}}
+         "bones": {bone name: (x, y, z)},
+         "bone_matrices": {bone name: the bone's bind matrix, 16 numbers row by row, its axes in rows 0-2 and its place in row 3
+                           (centimetres; a point of the bone's own space times it = the point in the file's space)}}
 
     (Blender 3.6's importer gives up on what Unity's exporter writes - a root that is skinned to and parents the meshes -
     with a KeyError in link_hierarchy; this reads what a body-to-body fit needs and nothing else.)"""
@@ -218,7 +220,7 @@ def meshes(path):
             clusters_of.setdefault(parent, []).append(child)
         elif child in models and parent in deformers:
             bone_of[parent] = child
-    out = {"meshes": [], "bones": {}}
+    out = {"meshes": [], "bones": {}, "bone_matrices": {}}
     for gid, g in geometry.items():
         v, pvi = g.find("Vertices"), g.find("PolygonVertexIndex")
         if v is None or pvi is None:
@@ -240,6 +242,7 @@ def meshes(path):
             link, tr = cl.find("TransformLink"), cl.find("Transform")
             if link is not None:
                 out["bones"].setdefault(bone, tuple(x * scale for x in link.props[0][12:15]))
+                out["bone_matrices"].setdefault(bone, tuple(link.props[0][:12]) + tuple(x * scale for x in link.props[0][12:15]) + (1.0,))
             if tr is not None and link is not None and bind is None:
                 # Transform takes the mesh's own space into the bone's (Unity's bind pose), TransformLink the bone's into the
                 # world: one after the other is where the mesh stood when it was bound - the same for every bone of it
