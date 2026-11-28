@@ -279,6 +279,10 @@ SKIN_LOOK = {
 }
 
 
+# False: the skin master is built without a skin pack's baked maps - no sample of them, nothing computed from them
+# (import_slice.py --no-baked).  For measuring what they cost, and for a machine that would rather have the frames.
+SKIN_BAKED = True
+
 # What Import/_local/skin_detail.json says about a relief that was put there (import_slice.py reads it): keys of SKIN_LOOK
 # that go before it - tile_cm, lines, pores, each a number or a table by zone.
 SKIN_LOCAL = {}
@@ -311,8 +315,19 @@ def build_skin(d, mpc, profile):
     sw_baked = g.collection(mpc, "SkinBaked")
     sw_relief = g.collection(mpc, "SkinRelief")
     relief_on = g.scalar("ReliefOn", 0.0)             # 1: this instance has the tiled relief in the game's detail map's place
+    def pack(name, default, sampler, nothing):
+        """One of a skin pack's maps as {"RGB" / "RGBA" / "R": (node, its output)} - or, with SKIN_BAKED off, the value that
+        says "nothing of it" as constants: the shader then has neither the sample nor what is computed from it."""
+        if SKIN_BAKED:
+            t = g.tex(name, default, sampler, (uv, ""))
+            return {k: (t, k) for k in ("RGB", "RGBA", "R")}
+        text = ", ".join("%.4f" % x for x in nothing)
+        return {"RGBA": (g.custom("return float4(%s);" % text, [], F4, desc=name + ": none", x=-1500), ""),
+                "RGB": (g.custom("return float3(%s);" % ", ".join("%.4f" % x for x in nothing[:3]), [], F3, desc=name + ": none", x=-1500), ""),
+                "R": (g.const(nothing[0], x=-1500), "")}
+
     # what the body has painted as its own - an areola, the navel (Tools/skin_transfer/bake.py --own; black: nothing)
-    b_own = g.tex("BakedOwn", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
+    b_own = pack("BakedOwn", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (0.0, 0.0, 0.0, 0.0))
     # the relief made here (SKIN_LOOK): furrows in R, G and pores in B, A, tiled so that it is as fine on a face as on a thigh
     rtiling = g.scalar("ReliefTiling", 60.0)
     ruv = g.custom("return UV * Tiling;", [("UV", uv, ""), ("Tiling", rtiling, "")], F2, desc="relief uv", x=-1900)
@@ -349,10 +364,10 @@ return float3(n, sqrt(saturate(1.0 - dot(n, n))));
       ("Relief", sw_relief, ""), ("Baked", sw_baked, ""), ("Beside", baked_beads, "")], F3,
                     [("Bead", F1), ("Rim", F1)], "sweat beads", x=-1500)
     # a skin pack's maps in this material's own layout (SKIN_LOOK "baked"; neutral defaults: nothing of it without them)
-    b_normal = g.tex("BakedNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
-    b_colour = g.tex("BakedColour", d["neutral"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
-    b_wet = g.tex("BakedWet", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (uv, ""))
-    b_wetn = g.tex("BakedWetNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (uv, ""))
+    b_normal = pack("BakedNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (0.0, 0.0, 1.0, 1.0))
+    b_colour = pack("BakedColour", d["neutral"], S.SAMPLERTYPE_LINEAR_COLOR, (0.5, 0.5, 0.5, 0.5))
+    b_wet = pack("BakedWet", d["none"], S.SAMPLERTYPE_LINEAR_COLOR, (0.0, 0.0, 0.0, 0.0))
+    b_wetn = pack("BakedWetNormal", d["flat"], S.SAMPLERTYPE_NORMAL, (0.0, 0.0, 1.0, 1.0))
     b_relief = g.scalar("BakedRelief", 0.0)
     b_tint = g.scalar("BakedColourAmount", 0.0)
     b_gloss = g.scalar("BakedGloss", 0.0)
@@ -368,7 +383,7 @@ float on = saturate(max(stand, run)) * Amount * Baked * saturate((700.0 - Depth)
 Water = on;
 float2 n = N.xy * on;
 return float3(n, sqrt(saturate(1.0 - dot(n, n))));
-""", [("W", b_wet, "RGBA"), ("N", b_wetn, "RGB"), ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, ""), ("Baked", sw_baked, "")], F3,
+""", [("W",) + b_wet["RGBA"], ("N",) + b_wetn["RGB"], ("Wet", wet, ""), ("Amount", b_sweat, ""), ("Depth", depth, ""), ("Baked", sw_baked, "")], F3,
                      [("Water", F1)], "sweat that stands and runs", x=-1500)
     # The game's own detail map.  In its place stands the relief made here (ReliefOn; the "skin" switch can go back) - but not
     # on what the body has painted as its own: the tile is skin of nowhere in particular, and stretched over an areola it was
@@ -379,7 +394,7 @@ return float3(n, sqrt(saturate(1.0 - dot(n, n))));
 float mine = ReliefOn * Relief;
 float kept = mine * saturate(Own) * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
 return Strength * ((1.0 - mine) + kept) * saturate((400.0 - Depth) / 250.0);
-""", [("Strength", dstrength, ""), ("Depth", depth, ""), ("ReliefOn", relief_on, ""), ("Relief", sw_relief, ""), ("Own", b_own, "R"),
+""", [("Strength", dstrength, ""), ("Depth", depth, ""), ("ReliefOn", relief_on, ""), ("Relief", sw_relief, ""), ("Own",) + b_own["R"],
       ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, "")], F1, desc="detail fade", x=-1100)
     nrm = g.custom(RNM, [("Base", normal, "RGB"), ("Detail", detail, "RGB"), ("Weight", fade, "")], F3, desc="normal + detail")
     rel = g.custom("""
@@ -396,13 +411,13 @@ Cavity = saturate(length(l) * 1.3 + length(p) * 1.7);
 return normalize(float3(l + p, 1.0));
 """, [("D", relief, "RGBA"), ("Lines", lines, ""), ("Pores", pores, ""), ("Depth", depth, ""), ("Field", fields, ""), ("Patches", patches, ""),
       ("Bead", bead, "Bead"), ("Wet", wet, ""), ("Water", water, "Water"), ("Relief", sw_relief, ""), ("Baked", sw_baked, ""),
-      ("Under", baked_tile, ""), ("Own", b_own, "R")], F3, [("Cavity", F1)], "relief", x=-1100)
+      ("Under", baked_tile, ""), ("Own",) + b_own["R"]], F3, [("Cavity", F1)], "relief", x=-1100)
     one = g.const(1.0, x=-1500)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", rel, ""), ("Weight", one, "")], F3, desc="normal + relief", x=-700)
     baked = g.custom("""
 float k = Strength * Baked * (1.0 - max(Bead, Water)) * (1.0 - 0.65 * saturate(Wet));
 return normalize(float3(N.xy * k, max(N.z, 0.05)));
-""", [("N", b_normal, "RGB"), ("Strength", b_relief, ""), ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, ""), ("Baked", sw_baked, "")], F3,
+""", [("N",) + b_normal["RGB"], ("Strength", b_relief, ""), ("Bead", bead, "Bead"), ("Water", water, "Water"), ("Wet", wet, ""), ("Baked", sw_baked, "")], F3,
                      desc="the pack's relief", x=-1100)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", baked, ""), ("Weight", one, "")], F3, desc="normal + the pack's relief", x=-600)
     nrm = g.custom(RNM, [("Base", nrm, ""), ("Detail", bead, ""), ("Weight", one, "")], F3, desc="normal + beads", x=-500)
@@ -457,7 +472,7 @@ return col;
                         ("Spec", spec, ""), ("Wet", wet, ""), ("Flush", flush, ""), ("WetRough", wet_rough, ""), ("FlushTint", flush_tint, ""),
                         ("Gloss", gloss, ""), ("Pit", rel, "Cavity"), ("PitDepth", cavity, ""), ("PitShade", shade, ""),
                         ("Bead", bead, "Bead"), ("BeadRim", bead, "Rim"), ("BeadRough", bead_rough, ""),
-                        ("BC", b_colour, "RGBA"), ("BW", b_wet, "RGBA"), ("Water", water, "Water"), ("ColourAmount", b_tint, ""),
+                        ("BC",) + b_colour["RGBA"], ("BW",) + b_wet["RGBA"], ("Water", water, "Water"), ("ColourAmount", b_tint, ""),
                         ("GlossAmount", b_gloss, ""), ("Veins", b_veins, ""), ("Thin", b_thin, ""), ("Scatter", scatter, ""),
                         ("Baked", sw_baked, "")],
                  F3, [("Roughness", F1), ("AO", F1), ("Specular", F1), ("Through", F1)], "skin")
@@ -800,8 +815,10 @@ def build_masters(defaults, force=False):
             have = f.read().strip()
     missing = [m for m in MASTERS if not eal.does_asset_exist("%s/%s" % (MATS, m))]
     mpc = ensure_mpc()
-    profile = ensure_skin_profile(rebuild=force or have != str(VERSION))
-    if force or missing or have != str(VERSION):
+    # (built without the baked maps is another build than with them: the next import without --no-baked builds them again)
+    want = str(VERSION) + ("" if SKIN_BAKED else " no-baked")
+    profile = ensure_skin_profile(rebuild=force or have != want)
+    if force or missing or have != want:
         log("building the master materials (version %s -> %d, missing %d)" % (have or "none", VERSION, len(missing)))
         build_skin(defaults, mpc, profile)
         build_eye(defaults)
@@ -815,7 +832,7 @@ def build_masters(defaults, force=False):
         build_flat(defaults)
         build_hidden(defaults)
         with open(stamp, "w") as f:
-            f.write(str(VERSION))
+            f.write(want)
     out = {m: unreal.load_asset("%s/%s.%s" % (MATS, m, m)) for m in MASTERS}
     out["MPC"] = mpc
     out["SkinProfile"] = profile
@@ -933,7 +950,7 @@ def make_instance(name, d, lookup, masters, folder):
             scalar("ReliefPores", skin_look("pores", zone))
             scalar("ReliefCavity", skin_look("cavity", zone))
             scalar("ReliefShade", skin_look("shade", zone))
-        baked = d.get("baked") or {}
+        baked = (d.get("baked") or {}) if SKIN_BAKED else {}
         look = SKIN_LOOK["baked"]
         if baked.get("n") is not None:
             mel.set_material_instance_texture_parameter_value(mi, "BakedNormal", baked["n"])

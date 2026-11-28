@@ -45,6 +45,8 @@ importlib.reload(mishi_fbx)
 importlib.reload(mishi_materials)
 importlib.reload(mishi_fx)
 importlib.reload(mishi_look)
+# --no-baked: the skin master without a skin pack's baked maps (what do they cost? a machine that would rather have the frames)
+mishi_materials.SKIN_BAKED = "--no-baked" not in sys.argv
 if "--style" in sys.argv and sys.argv.index("--style") + 1 < len(sys.argv):
     mishi_look.STYLE = sys.argv[sys.argv.index("--style") + 1]             # the picture's style: game / cinema (mishi_look.STYLES)
 
